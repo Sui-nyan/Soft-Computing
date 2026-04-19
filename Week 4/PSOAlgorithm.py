@@ -2,45 +2,45 @@ import numpy as np
 
 
 class Particle:
-    def __init__(self, dim, bounds, func_name="rastrigin", max_velocity=1.0):
+    def __init__(self, dimension, bounds, func_name, max_velocity=1.0):
         self.func_name = func_name
-        self.dim = dim
+        self.dimension = dimension
 
         # Parse bounds into per-dimension arrays
-        self.lower_bounds, self.upper_bounds = self._parse_bounds(bounds, dim)
+        self.lower_bounds, self.upper_bounds = self._parse_bounds(bounds, dimension)
 
         # Velocity can be scalar or per-dimension array
         if np.isscalar(max_velocity):
-            self.max_velocity = np.full(dim, float(max_velocity), dtype=float)
+            self.max_velocity = np.full(dimension, float(max_velocity), dtype=float)
         else:
             max_velocity = np.asarray(max_velocity, dtype=float)
-            if max_velocity.shape != (dim,):
-                raise ValueError("max_velocity must be a scalar or have shape (dim,)")
+            if max_velocity.shape != (dimension,):
+                raise ValueError("max_velocity must be a scalar or have shape (dimension,)")
             self.max_velocity = max_velocity
 
         # Current random position
         self.position = np.random.uniform(
             low=self.lower_bounds,
             high=self.upper_bounds,
-            size=self.dim
+            size=self.dimension
         )
 
         # Initial random velocity
         self.velocity = np.random.uniform(
             low=-self.max_velocity,
             high=self.max_velocity,
-            size=self.dim
+            size=self.dimension
         )
 
         # Personal best
         self.p_best = self.position.copy()
         self.p_best_fitness = self.fitness(self.position)
 
-    def _parse_bounds(self, bounds, dim):
+    def _parse_bounds(self, bounds, dimension):
         """
         Convert bounds into:
-            lower_bounds.shape == (dim,)
-            upper_bounds.shape == (dim,)
+            lower_bounds.shape == (dimension,)
+            upper_bounds.shape == (dimension,)
         """
         # Case 1: scalar bounds like (-5, 5)
         if (
@@ -50,18 +50,18 @@ class Particle:
             and np.isscalar(bounds[1])
         ):
             low, high = bounds
-            lower_bounds = np.full(dim, low, dtype=float)
-            upper_bounds = np.full(dim, high, dtype=float)
+            lower_bounds = np.full(dimension, low, dtype=float)
+            upper_bounds = np.full(dimension, high, dtype=float)
 
         # Case 2: per-dimension bounds like [(-5, 5), (-5, 5), (-5, 5)]
-        elif isinstance(bounds, (tuple, list)) and len(bounds) == dim:
+        elif isinstance(bounds, (tuple, list)) and len(bounds) == dimension:
             lower_bounds = np.array([b[0] for b in bounds], dtype=float)
             upper_bounds = np.array([b[1] for b in bounds], dtype=float)
 
         else:
             raise ValueError(
-                f"Invalid bounds format for dim={dim}. "
-                f"Use either (low, high) or a list of {dim} (low, high) pairs."
+                f"Invalid bounds format for dimension={dimension}. "
+                f"Use either (low, high) or a list of {dimension} (low, high) pairs."
             )
 
         if np.any(lower_bounds >= upper_bounds):
@@ -120,25 +120,26 @@ class Particle:
 
 
 class Swarm:
-    def __init__(self, num_particles, dim, bounds, func_name="rastrigin"):
-        self.dim = dim
+    def __init__(self, pop_size, dimension, bounds, func_name="rastrigin", objective_function=None):
+        self.dimension = dimension
         self.bounds = bounds
         self.func_name = func_name
+        self.objective_function = objective_function
         self.particles = []
 
         # Parse bounds once for swarm-wide use
-        self.lower_bounds, self.upper_bounds = self._parse_bounds(bounds, dim)
+        self.lower_bounds, self.upper_bounds = self._parse_bounds(bounds, dimension)
 
         # Dynamic max velocity = 20% of search range per dimension
         search_width = self.upper_bounds - self.lower_bounds
         max_velocity = 0.2 * search_width
 
-        for _ in range(num_particles):
+        for _ in range(pop_size):
             self.particles.append(
                 Particle(
-                    dim=dim,
+                    dimension=dimension,
                     bounds=bounds,
-                    func_name=func_name,
+                    func_name=func_name,   
                     max_velocity=max_velocity
                 )
             )
@@ -149,7 +150,7 @@ class Swarm:
 
         self.find_global_best()
 
-    def _parse_bounds(self, bounds, dim):
+    def _parse_bounds(self, bounds, dimension):
         """
         Same bounds parser as in Particle, kept here for swarm-level calculations.
         """
@@ -160,17 +161,17 @@ class Swarm:
             and np.isscalar(bounds[1])
         ):
             low, high = bounds
-            lower_bounds = np.full(dim, low, dtype=float)
-            upper_bounds = np.full(dim, high, dtype=float)
+            lower_bounds = np.full(dimension, low, dtype=float)
+            upper_bounds = np.full(dimension, high, dtype=float)
 
-        elif isinstance(bounds, (tuple, list)) and len(bounds) == dim:
+        elif isinstance(bounds, (tuple, list)) and len(bounds) == dimension:
             lower_bounds = np.array([b[0] for b in bounds], dtype=float)
             upper_bounds = np.array([b[1] for b in bounds], dtype=float)
 
         else:
             raise ValueError(
-                f"Invalid bounds format for dim={dim}. "
-                f"Use either (low, high) or a list of {dim} (low, high) pairs."
+                f"Invalid bounds format for dimension={dimension}. "
+                f"Use either (low, high) or a list of {dimension} (low, high) pairs."
             )
 
         if np.any(lower_bounds >= upper_bounds):
@@ -197,13 +198,13 @@ class Swarm:
         self.g_best = None
         self.find_global_best()
 
-    def simulate(self, steps, c1=1.0, c2=1.0, w=0.7):
+    def simulate(self, iterations, c1=1.0, c2=1.0, w=0.7):
         """
-        Generator function to yield the swarm state at each step.
+        Generator function to yield the swarm state at each iteration.
         """
         self.history = []
 
-        for i in range(steps):
+        for i in range(iterations):
             self.update(c1=c1, c2=c2, w=w)
             self.history.append(self.g_best_fitness)
 
@@ -214,13 +215,13 @@ class Swarm:
                 "positions": [p.position.copy() for p in self.particles]
             }
 
-    def run(self, steps, c1=1.0, c2=1.0, w=0.7):
+    def run(self, iterations, c1=1.0, c2=1.0, w=0.7, objective_function=None):
         """
         Convenience method like the ABC version.
 
         Returns:
             tuple: (best_position, best_fitness)
         """
-        for _ in self.simulate(steps, c1=c1, c2=c2, w=w):
+        for _ in self.simulate(iterations, c1=c1, c2=c2, w=w):
             pass
         return self.g_best.copy(), self.g_best_fitness
