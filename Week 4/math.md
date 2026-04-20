@@ -28,18 +28,12 @@ where:
 * $e_i(t) \ge 0$: energy,
 * $p_i(t)$: personal best position,
 * $f_i(t) = f(x_i(t))$: current fitness,
-* $s_i(t) \in {\text{ALIVE}, \text{DEAD}}$: status. 
+* $s_i(t) \in \{{\text{ALIVE}, \text{DEAD}}\}$. 
 
 The personal best satisfies
 
 $$
 p_i(t) = \arg\min_{\tau \le t} f(x_i(\tau)).
-$$
-
-The algorithm also maintains the global best visited solution
-
-$$
-x_*(t) = \arg\min_{i,\tau \le t} f(x_i(\tau)).
 $$
 
 
@@ -398,43 +392,3 @@ Then:
 * deposit bonus moisture if personal best improves,
 * always deplete the visited region,
 * kill root if $e_i(t+1) \le 0$. 
-
-## 11. Shortend version
-
-$$
-\min_{x\inD} f(x), \qquad D=\prod_{j=1}^d[\ell_j,u_j]
-$$
-
-$$
-M(t)(x)=M_0+\sum_{k=1}^{K_t} a_k(t)
-\exp!\left(-\frac{|x-c_k(t)|^2}{2\sigma^2}\right)
-$$
-
-$$
-d_i(t)=\operatorname{norm}!\left(
-w_h \operatorname{norm}(\nabla M(t)(x_i(t)))
-+w_g\hat g+w_r\hat\xi_i(t)
-+w_c\hat q_i(t)
-+w_b\operatorname{norm}(p_i(t)-x_i(t))
-\right)
-$$
-
-$$
-x_i(t+1)=\Pi_D!\left(x_i(t)+\Delta_i(t) d_i(t)\right),
-\qquad
-\Delta_i(t)=\Delta\cdot \operatorname{clip}!\left(\frac{e_i(t)}{5},0.25,2\right)
-$$
-
-$$
-\gamma_i(t)=
-\operatorname{clip}!\left(
-\frac{\max(f(x_i(t))-f(x_i(t+1)),0)}{|f(x_i(t))|+\varepsilon},
-0,1
-\right)
-$$
-
-$$
-e_i(t+1)=e_i(t)+\alpha\gamma_i(t)-c_{\text{step}}
-$$
-
-with splitting applied when $e_i^{(t)}\ge e_{\text{split}}$. 
