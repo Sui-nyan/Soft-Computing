@@ -1,14 +1,20 @@
 """
-Genetic Algorithm for A/C Scheduling Optimization
-Solves the mixed integer-continuous optimization problem for daily A/C operation scheduling
-with Taipei's tiered electricity pricing.
+Genetic Algorithm for A/C Scheduling Optimization (v2: Thermodynamic Model)
+Solves mixed integer-continuous optimization with realistic thermal dynamics and variable COP.
+
+Key enhancements:
+- First-order thermal model with passive heat exchange
+- Variable A/C cooling power based on temperature difference
+- COP efficiency varies with operating load (peaks at ~70% capacity)
+- Realistic electrical energy calculation accounting for efficiency losses
 """
 
 import numpy as np
-from typing import Tuple, Dict, List, Callable
-import warnings
+from typing import Tuple, Dict, List
 from dataclasses import dataclass
-from energy_consumption_utils import EnergyConsumptionCalculator
+import warnings
+
+from thermal_dynamics import ThermalSimulator, ThermalProperties
 from energy_cost_utils import TaipeiTieredPricing
 
 
@@ -17,7 +23,7 @@ class GAConfig:
     """Configuration parameters for the genetic algorithm."""
     
     population_size: int = 100
-    generations: int = 200
+    generations: int = 250
     mutation_rate: float = 0.15
     crossover_rate: float = 0.8
     elite_size: int = 5
@@ -33,16 +39,20 @@ class GAConfig:
     max_setpoint: float = 27.0
     min_comfortable_temp: float = 18.0
     max_comfortable_temp: float = 28.0
-    ac_power: float = 2.9
+    
+    # Initial condition
+    initial_indoor_temp: float = 24.0
 
 
 class GeneticAlgorithmAC:
     """
-    Genetic Algorithm optimizer for A/C scheduling.
+    Genetic Algorithm optimizer for A/C scheduling with thermal dynamics.
     
     Optimizes a 48-dimensional problem:
     - 24 binary variables (A/C on/off for each hour)
     - 24 continuous variables (temperature setpoints for each hour)
+    
+    Uses realistic first-order thermal model with variable COP efficiency.
     
     Parameters:
     -----------
@@ -50,9 +60,16 @@ class GeneticAlgorithmAC:
         Array of outdoor temperatures for each hour (shape: 24)
     config : GAConfig
         Configuration object with GA parameters
+    thermal_props : ThermalProperties
+        Thermal properties of the room/building (uses defaults if None)
     """
     
-    def __init__(self, outdoor_temps: np.ndarray, config: GAConfig = None):
+    def __init__(
+        self,
+        outdoor_temps: np.ndarray,
+        config: GAConfig = None,
+        thermal_props: ThermalProperties = None
+    ):
         """
         Initialize the genetic algorithm.
         
@@ -62,22 +79,26 @@ class GeneticAlgorithmAC:
             Array of outdoor temperatures for 24 hours
         config : GAConfig
             Configuration parameters (uses defaults if None)
+        thermal_props : ThermalProperties
+            Thermal properties (uses defaults if None)
         """
         if len(outdoor_temps) != 24:
             raise ValueError("outdoor_temps must have exactly 24 elements (one per hour)")
         
         self.outdoor_temps = np.array(outdoor_temps, dtype=float)
         self.config = config if config is not None else GAConfig()
+        self.thermal_props = thermal_props if thermal_props is not None else ThermalProperties()
         
-        # Initialize utility calculators
-        self.energy_calc = EnergyConsumptionCalculator(AC_power=self.config.ac_power)
+        # Initialize simulators
+        self.thermal_sim = ThermalSimulator(props=self.thermal_props)
         self.pricing = TaipeiTieredPricing(season='summer')
         
         # History tracking
         self.best_fitness_history = []
         self.mean_fitness_history = []
         self.best_individual_history = []
-        
+        self.evaluations = 0
+    
     def _create_individual(self) -> np.ndarray:
         """
         Create a random individual for the initial population.
@@ -134,6 +155,8 @@ class GeneticAlgorithmAC:
         """
         Evaluate the fitness (objective function) of an individual.
         
+        Uses thermal dynamics simulation to get realistic energy consumption.
+        
         Lower fitness is better (minimization problem).
         
         Parameters:
@@ -144,25 +167,34 @@ class GeneticAlgorithmAC:
         Returns:
         --------
         float
-            Fitness value (negative = better performance)
+            Fitness value (lower = better performance)
         """
         modes, setpoints = self._decode_individual(individual)
         
-        # Calculate energy metrics
-        indoor_temps, total_consumption, total_discomfort = \
-            self.energy_calc.calculate_daily_metrics(modes, setpoints, self.outdoor_temps)
+        # Run thermal simulation
+        sim_results = self.thermal_sim.simulate_day(
+            modes=modes,
+            setpoints=setpoints,
+            outdoor_temps=self.outdoor_temps,
+            initial_indoor_temp=self.config.initial_indoor_temp
+        )
+        
+        # Extract metrics
+        total_energy_kwh = sim_results['total_energy_kwh']
+        total_discomfort = sim_results['total_discomfort']
         
         # Calculate cost
-        total_cost = self.pricing.calculate_cost(total_consumption)
+        total_cost = self.pricing.calculate_cost(total_energy_kwh)
         
         # Objective function: weighted sum of three objectives
         # F(x) = α * C_total + β * E_total + δ * D_total
         fitness = (
             self.config.weight_cost * total_cost +
-            self.config.weight_consumption * total_consumption +
+            self.config.weight_consumption * total_energy_kwh +
             self.config.weight_discomfort * total_discomfort
         )
         
+        self.evaluations += 1
         return fitness
     
     def _tournament_selection(self, population: np.ndarray, fitness: np.ndarray) -> np.ndarray:
@@ -257,7 +289,7 @@ class GeneticAlgorithmAC:
         
         return mutant
     
-    def optimize(self, random_seed: int = None) -> Dict:
+    def optimize(self, random_seed: int = None, verbose: bool = True) -> Dict:
         """
         Run the genetic algorithm optimization.
         
@@ -265,6 +297,8 @@ class GeneticAlgorithmAC:
         -----------
         random_seed : int
             Random seed for reproducibility (optional)
+        verbose : bool
+            Print progress information (default: True)
         
         Returns:
         --------
@@ -278,12 +312,21 @@ class GeneticAlgorithmAC:
             - 'fitness_history': Best and mean fitness per generation
             - 'population': Final population
             - 'fitness': Final fitness values
+            - 'total_evaluations': Total fitness evaluations performed
         """
         if random_seed is not None:
             np.random.seed(random_seed)
         
+        self.evaluations = 0
+        
         # Initialize population
         population = np.array([self._create_individual() for _ in range(self.config.population_size)])
+        
+        if verbose:
+            print(f"Starting optimization with population size {self.config.population_size}")
+            print(f"Objective weights: Cost={self.config.weight_cost}, "
+                  f"Consumption={self.config.weight_consumption}, "
+                  f"Discomfort={self.config.weight_discomfort}\n")
         
         # Evaluation loop
         for generation in range(self.config.generations):
@@ -300,15 +343,15 @@ class GeneticAlgorithmAC:
             self.best_individual_history.append(population[best_idx].copy())
             
             # Progress reporting
-            if (generation + 1) % 50 == 0:
-                print(f"Generation {generation + 1}/{self.config.generations} "
-                      f"| Best fitness: {best_fitness:.2f} "
-                      f"| Mean fitness: {mean_fitness:.2f}")
+            if verbose and (generation + 1) % 50 == 0:
+                print(f"Generation {generation + 1:3d}/{self.config.generations} | "
+                      f"Best: {best_fitness:10.2f} | "
+                      f"Mean: {mean_fitness:10.2f} | "
+                      f"Evals: {self.evaluations:6d}")
             
             # Selection: keep elite individuals
             elite_indices = np.argsort(fitness)[:self.config.elite_size]
             elite_population = population[elite_indices].copy()
-            elite_fitness = fitness[elite_indices].copy()
             
             # Create new population
             new_population = [elite_population[i].copy() for i in range(self.config.elite_size)]
@@ -339,6 +382,16 @@ class GeneticAlgorithmAC:
         best_modes, best_setpoints = self._decode_individual(best_individual)
         best_metrics = self._get_solution_metrics(best_modes, best_setpoints)
         
+        if verbose:
+            print(f"\n{'='*70}")
+            print(f"Optimization Complete")
+            print(f"{'='*70}")
+            print(f"Best fitness: {best_fitness:.2f}")
+            print(f"Total evaluations: {self.evaluations}")
+            print(f"Final population fitness - Best: {final_fitness.min():.2f}, "
+                  f"Mean: {final_fitness.mean():.2f}, "
+                  f"Worst: {final_fitness.max():.2f}\n")
+        
         return {
             'best_individual': best_individual,
             'best_fitness': best_fitness,
@@ -351,11 +404,12 @@ class GeneticAlgorithmAC:
             },
             'population': population,
             'fitness': final_fitness,
+            'total_evaluations': self.evaluations,
         }
     
     def _get_solution_metrics(self, modes: np.ndarray, setpoints: np.ndarray) -> Dict:
         """
-        Get detailed metrics for a solution.
+        Get detailed metrics for a solution using thermal simulation.
         
         Parameters:
         -----------
@@ -367,23 +421,32 @@ class GeneticAlgorithmAC:
         Returns:
         --------
         dict
-            Detailed metrics including energy, cost, comfort, and thermal data
+            Detailed metrics including thermal, energy, cost, and comfort data
         """
-        indoor_temps, total_consumption, total_discomfort = \
-            self.energy_calc.calculate_daily_metrics(modes, setpoints, self.outdoor_temps)
+        sim_results = self.thermal_sim.simulate_day(
+            modes=modes,
+            setpoints=setpoints,
+            outdoor_temps=self.outdoor_temps,
+            initial_indoor_temp=self.config.initial_indoor_temp
+        )
         
-        total_cost = self.pricing.calculate_cost(total_consumption)
-        cost_breakdown = self.pricing.get_cost_breakdown(total_consumption)
+        total_cost = self.pricing.calculate_cost(sim_results['total_energy_kwh'])
+        cost_breakdown = self.pricing.get_cost_breakdown(sim_results['total_energy_kwh'])
         
         return {
-            'indoor_temperatures': indoor_temps,
-            'total_consumption_kwh': total_consumption,
+            'indoor_temperatures': sim_results['indoor_temps'],
+            'cooling_powers': sim_results['cooling_powers'],
+            'electrical_powers': sim_results['electrical_powers'],
+            'cop_values': sim_results['cop_values'],
+            'total_energy_kwh': sim_results['total_energy_kwh'],
+            'total_cooling_kwh': sim_results['total_cooling_kwh'],
             'total_cost_twd': total_cost,
-            'total_discomfort': total_discomfort,
-            'ac_on_hours': int(np.sum(modes)),
-            'mean_indoor_temp': np.mean(indoor_temps),
-            'min_indoor_temp': np.min(indoor_temps),
-            'max_indoor_temp': np.max(indoor_temps),
+            'total_discomfort': sim_results['total_discomfort'],
+            'ac_on_hours': sim_results['ac_on_hours'],
+            'mean_indoor_temp': sim_results['mean_indoor_temp'],
+            'min_indoor_temp': sim_results['min_indoor_temp'],
+            'max_indoor_temp': sim_results['max_indoor_temp'],
+            'mean_cop': sim_results['mean_cop'],
             'cost_breakdown': cost_breakdown,
         }
 
@@ -394,8 +457,9 @@ def run_optimization_scenario(
     weight_cost: float = 1.0,
     weight_consumption: float = 0.5,
     weight_discomfort: float = 1.0,
-    generations: int = 200,
-    random_seed: int = 42
+    generations: int = 250,
+    random_seed: int = 42,
+    thermal_props: ThermalProperties = None
 ) -> Dict:
     """
     Run a complete optimization scenario with specified weights.
@@ -416,16 +480,18 @@ def run_optimization_scenario(
         Number of GA generations to run
     random_seed : int
         Random seed for reproducibility
+    thermal_props : ThermalProperties
+        Thermal properties (uses defaults if None)
     
     Returns:
     --------
     dict
         Results from the optimization
     """
-    print(f"\n{'='*60}")
-    print(f"Running scenario: {scenario_name}")
-    print(f"Weights: Cost={weight_cost}, Consumption={weight_consumption}, Discomfort={weight_discomfort}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*70}")
+    print(f"Scenario: {scenario_name}")
+    print(f"Objective weights: Cost={weight_cost}, Consumption={weight_consumption}, Discomfort={weight_discomfort}")
+    print(f"{'='*70}\n")
     
     config = GAConfig(
         weight_cost=weight_cost,
@@ -434,14 +500,17 @@ def run_optimization_scenario(
         generations=generations,
     )
     
-    ga = GeneticAlgorithmAC(outdoor_temps, config)
-    results = ga.optimize(random_seed=random_seed)
+    ga = GeneticAlgorithmAC(outdoor_temps, config, thermal_props)
+    results = ga.optimize(random_seed=random_seed, verbose=True)
     
-    print(f"\nOptimization complete for {scenario_name}")
-    print(f"Best fitness: {results['best_fitness']:.2f}")
-    print(f"Daily cost: {results['best_metrics']['total_cost_twd']:.2f} TWD")
-    print(f"Daily consumption: {results['best_metrics']['total_consumption_kwh']:.2f} kWh")
-    print(f"Daily discomfort: {results['best_metrics']['total_discomfort']:.2f}")
-    print(f"A/C on hours: {results['best_metrics']['ac_on_hours']}/24")
+    metrics = results['best_metrics']
+    print(f"\nScenario Results:")
+    print(f"  Daily cost:          {metrics['total_cost_twd']:8.2f} TWD")
+    print(f"  Energy consumed:     {metrics['total_energy_kwh']:8.2f} kWh")
+    print(f"  Cooling delivered:   {metrics['total_cooling_kwh']:8.2f} kWh")
+    print(f"  Mean COP:            {metrics['mean_cop']:8.2f}")
+    print(f"  Discomfort:          {metrics['total_discomfort']:8.2f} °C²")
+    print(f"  A/C on hours:        {metrics['ac_on_hours']:8d}/24")
+    print(f"  Temp range:          {metrics['min_indoor_temp']:5.1f}°C to {metrics['max_indoor_temp']:5.1f}°C")
     
     return results
