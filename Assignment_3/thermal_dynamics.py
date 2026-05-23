@@ -38,8 +38,8 @@ class ThermalProperties:
     #
     # NOTE: Previous value of 50,000 kJ/K was too high (694 hour RC constant),
     # causing unrealistic room behavior where temp barely changes over a day.
-    thermal_capacitance_kj_per_k: float = 400.0
-    thermal_resistance_k_per_w: float = 0.05
+    thermal_capacitance_kj_per_k: float = 4000.0 #400.0
+    thermal_resistance_k_per_w: float = 0.005 #0.05
 
     # A/C system parameters
     ac_max_power_w: float = 2900.0                  # Maximum cooling capacity (2.9 kW)

@@ -82,10 +82,26 @@ class GeneticAlgorithmAC:
         thermal_props : ThermalProperties
             Thermal properties (uses defaults if None)
         """
-        if len(outdoor_temps) != 24:
-            raise ValueError("outdoor_temps must have exactly 24 elements (one per hour)")
+        #if len(outdoor_temps) != 24:
+        #   raise ValueError("outdoor_temps must have exactly 24 elements (one per hour)")
         
         self.outdoor_temps = np.array(outdoor_temps, dtype=float)
+        self.num_hours = len(self.outdoor_temps) 
+        self.chromosome_length = self.num_hours * 2   
+        
+        assert self.chromosome_length == 2 * self.num_hours, (
+            f"chromosome_length ({self.chromosome_length}) "
+            f"must equal 2 * num_hours ({2 * self.num_hours})"
+        )    
+        if len(outdoor_temps) != 672:
+            raise ValueError("outdoor_temps must have exactly 672 elements (28 days * 24 hours)")
+
+        if self.num_hours == 0:
+            raise ValueError("outdoor_temps array cannot be empty!")
+        
+        print("[DEBUG] num_hours =", self.num_hours)
+        print("[DEBUG] chromosome_length =", self.chromosome_length)
+
         self.config = config if config is not None else GAConfig()
         self.thermal_props = thermal_props if thermal_props is not None else ThermalProperties()
         
@@ -110,16 +126,17 @@ class GeneticAlgorithmAC:
             - Elements [0, 2, 4, ..., 46]: Binary A/C modes (0 or 1)
             - Elements [1, 3, 5, ..., 47]: Continuous setpoints
         """
-        individual = np.zeros(48)
-        
+        #individual = np.zeros(48)
+        individual = np.zeros(self.chromosome_length, dtype=float)
+
         # Binary modes: randomly 0 or 1
-        individual[::2] = np.random.randint(0, 2, size=24)
+        individual[::2] = np.random.randint(0, 2, size=self.num_hours)
         
         # Continuous setpoints: uniform in [min_setpoint, max_setpoint]
         individual[1::2] = np.random.uniform(
             self.config.min_setpoint,
             self.config.max_setpoint,
-            size=24
+            size=self.num_hours #24
         )
         
         return individual
@@ -271,12 +288,12 @@ class GeneticAlgorithmAC:
         mutant = individual.copy()
         
         # Mutate binary genes (A/C modes) - flip with probability
-        for i in range(0, 48, 2):  # Even indices: binary modes
+        for i in range(0, self.chromosome_length, 2):  # Even indices: binary modes
             if np.random.rand() < self.config.mutation_rate:
                 mutant[i] = 1 - mutant[i]
         
         # Mutate continuous genes (setpoints) - Gaussian perturbation
-        for i in range(1, 48, 2):  # Odd indices: continuous setpoints
+        for i in range(1, self.chromosome_length, 2):  # Odd indices: continuous setpoints
             if np.random.rand() < self.config.mutation_rate:
                 # Gaussian mutation with std = 0.5°C
                 mutant[i] += np.random.normal(0, 0.5)
@@ -451,6 +468,7 @@ class GeneticAlgorithmAC:
         }
 
 
+
 def run_optimization_scenario(
     outdoor_temps: np.ndarray,
     scenario_name: str,
@@ -488,6 +506,7 @@ def run_optimization_scenario(
     dict
         Results from the optimization
     """
+    
     print(f"\n{'='*70}")
     print(f"Scenario: {scenario_name}")
     print(f"Objective weights: Cost={weight_cost}, Consumption={weight_consumption}, Discomfort={weight_discomfort}")
@@ -505,12 +524,12 @@ def run_optimization_scenario(
     
     metrics = results['best_metrics']
     print(f"\nScenario Results:")
-    print(f"  Daily cost:          {metrics['total_cost_twd']:8.2f} TWD")
+    print(f"  Monthly cost:          {metrics['total_cost_twd']:8.2f} TWD") #Daily cost-> Monthly cost
     print(f"  Energy consumed:     {metrics['total_energy_kwh']:8.2f} kWh")
     print(f"  Cooling delivered:   {metrics['total_cooling_kwh']:8.2f} kWh")
     print(f"  Mean COP:            {metrics['mean_cop']:8.2f}")
     print(f"  Discomfort:          {metrics['total_discomfort']:8.2f} °C²")
-    print(f"  A/C on hours:        {metrics['ac_on_hours']:8d}/24")
+    print(f"  A/C on hours:        {metrics['ac_on_hours']:8d}/{len(outdoor_temps)}")
     print(f"  Temp range:          {metrics['min_indoor_temp']:5.1f}°C to {metrics['max_indoor_temp']:5.1f}°C")
     
     return results
