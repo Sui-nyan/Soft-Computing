@@ -1,0 +1,11 @@
+name: space-miner
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pygame>=2.5
+  - pip:
+      - neat-python==0.92
+variables:
+  PYGAME_HIDE_SUPPORT_PROMPT: "1"
