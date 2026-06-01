@@ -67,6 +67,12 @@ Train and replay the winner:
 python HyperNEAT_v1.py --config hyperneat_v1_config.json --render-winner
 ```
 
+Replay a saved HyperNEAT v1 winner without retraining:
+
+```powershell
+python render_hyperneat_winner.py
+```
+
 ## HyperNEAT v1
 
 `HyperNEAT_v1.py` evolves a CPPN with `neat-python`, then decodes it into a

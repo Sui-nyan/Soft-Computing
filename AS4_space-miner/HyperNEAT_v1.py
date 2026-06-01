@@ -951,13 +951,14 @@ def render_controller(controller, config, seed):
         observation, done = env.step(action)
 
         screen.fill(colors["black"])
+        camera_center = (width / 2.0, height / 2.0)
         if bool(config["render"]["show_grid"]):
-            draw_local_grid(screen, env, config, colors["grid"])
+            draw_local_grid(screen, env, config, colors["grid"], camera_center)
         for mineral in env.minerals:
-            pygame.draw.circle(screen, colors["mineral"], (int(mineral.x), int(mineral.y)), int(mineral.radius))
+            draw_wrapped_body(screen, colors["mineral"], mineral, env, camera_center)
         for asteroid in env.asteroids:
-            pygame.draw.circle(screen, colors["asteroid"], (int(asteroid.x), int(asteroid.y)), int(asteroid.radius))
-        draw_ship(screen, env.ship, colors)
+            draw_wrapped_body(screen, colors["asteroid"], asteroid, env, camera_center)
+        draw_ship(screen, env.ship, colors, camera_center)
         draw_stats(screen, font, env, action, colors["white"])
         pygame.display.flip()
         clock.tick(int(config["render"]["fps"]))
@@ -966,36 +967,57 @@ def render_controller(controller, config, seed):
     pygame.quit()
 
 
-def draw_local_grid(screen, env, config, color):
+def world_to_screen(x, y, env, camera_center):
+    dx, dy = env._relative_to_ship(x, y)
+    return camera_center[0] + dx, camera_center[1] + dy
+
+
+def draw_wrapped_body(screen, color, body, env, camera_center):
+    import pygame
+
+    screen_x, screen_y = world_to_screen(body.x, body.y, env, camera_center)
+    radius = int(body.radius)
+    screen_width, screen_height = screen.get_size()
+
+    for x_offset in (-env.width, 0.0, env.width):
+        for y_offset in (-env.height, 0.0, env.height):
+            draw_x = screen_x + x_offset
+            draw_y = screen_y + y_offset
+            if -radius <= draw_x <= screen_width + radius and -radius <= draw_y <= screen_height + radius:
+                pygame.draw.circle(screen, color, (int(draw_x), int(draw_y)), radius)
+
+
+def draw_local_grid(screen, env, config, color, camera_center):
     import pygame
 
     grid_size = int(config["grid"]["size"])
     view_radius = float(config["grid"]["view_radius"])
     cell_size = (2.0 * view_radius) / grid_size
-    left = env.ship.x - view_radius
-    top = env.ship.y - view_radius
+    left = camera_center[0] - view_radius
+    top = camera_center[1] - view_radius
     for index in range(grid_size + 1):
         offset = index * cell_size
         pygame.draw.line(screen, color, (left + offset, top), (left + offset, top + 2 * view_radius), 1)
         pygame.draw.line(screen, color, (left, top + offset), (left + 2 * view_radius, top + offset), 1)
 
 
-def draw_ship(screen, ship, colors):
+def draw_ship(screen, ship, colors, camera_center):
     import pygame
 
-    pygame.draw.circle(screen, colors["ship"], (int(ship.x), int(ship.y)), int(ship.radius))
+    ship_x, ship_y = camera_center
+    pygame.draw.circle(screen, colors["ship"], (int(ship_x), int(ship_y)), int(ship.radius))
     points = [
         (
-            ship.x + ship.radius * math.cos(ship.angle),
-            ship.y + ship.radius * math.sin(ship.angle),
+            ship_x + ship.radius * math.cos(ship.angle),
+            ship_y + ship.radius * math.sin(ship.angle),
         ),
         (
-            ship.x + ship.radius * math.cos(ship.angle + 2.5),
-            ship.y + ship.radius * math.sin(ship.angle + 2.5),
+            ship_x + ship.radius * math.cos(ship.angle + 2.5),
+            ship_y + ship.radius * math.sin(ship.angle + 2.5),
         ),
         (
-            ship.x + ship.radius * math.cos(ship.angle - 2.5),
-            ship.y + ship.radius * math.sin(ship.angle - 2.5),
+            ship_x + ship.radius * math.cos(ship.angle - 2.5),
+            ship_y + ship.radius * math.sin(ship.angle - 2.5),
         ),
     ]
     pygame.draw.polygon(screen, colors["white"], points)
