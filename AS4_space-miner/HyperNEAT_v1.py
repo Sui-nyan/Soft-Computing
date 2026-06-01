@@ -113,6 +113,7 @@ DEFAULT_CONFIG = {
     "fitness": {
         "mineral_reward": 150.0,
         "progress_reward": 30.0,
+        "distance_traveled_reward": 4.0,
         "alive_reward": 0.02,
         "fuel_remaining_reward": 10.0,
         "collision_penalty": 150.0,
@@ -181,6 +182,7 @@ class EpisodeMetrics:
     empty_mine_attempts: int
     idle_frames: int
     progress: float
+    distance_traveled: float
     danger: float
 
 
@@ -288,6 +290,7 @@ class SpaceMinerEnv:
         self.empty_mine_attempts = 0
         self.idle_frames = 0
         self.progress_sum = 0.0
+        self.distance_traveled = 0.0
         self.danger_sum = 0.0
         self.fuel_used = 0.0
 
@@ -307,6 +310,7 @@ class SpaceMinerEnv:
         self.empty_mine_attempts = 0
         self.idle_frames = 0
         self.progress_sum = 0.0
+        self.distance_traveled = 0.0
         self.danger_sum = 0.0
         self.fuel_used = 0.0
         self.minerals = [self._spawn_mineral() for _ in range(int(self.env_cfg["initial_minerals"]))]
@@ -444,6 +448,7 @@ class SpaceMinerEnv:
         self.ship.angle = (self.ship.angle + turn) % math.tau
 
         moved = False
+        moved_distance = 0.0
         if self.ship.fuel > 0.0:
             step_fuel_cost = float(self.env_cfg["fuel_cost_per_step"])
             thrust_fuel_cost = float(self.env_cfg["fuel_cost_per_thrust"]) * thrust
@@ -455,8 +460,10 @@ class SpaceMinerEnv:
                 self.ship.x = (self.ship.x + math.cos(self.ship.angle) * distance) % self.width
                 self.ship.y = (self.ship.y + math.sin(self.ship.angle) * distance) % self.height
                 moved = True
+                moved_distance = distance
 
         self.fuel_used += max(0.0, previous_fuel - self.ship.fuel)
+        self.distance_traveled += moved_distance
 
         mined_count = 0
         if mine:
@@ -508,9 +515,11 @@ class SpaceMinerEnv:
     def metrics(self):
         fitness_cfg = self.fitness_cfg
         fuel_ratio = self.ship.fuel / float(self.env_cfg["fuel_capacity"])
+        normalized_distance_traveled = self.distance_traveled / max(float(self.grid_cfg["view_radius"]), 1e-6)
         fitness = (
             float(fitness_cfg["mineral_reward"]) * self.ship.minerals
             + float(fitness_cfg["progress_reward"]) * self.progress_sum
+            + float(fitness_cfg["distance_traveled_reward"]) * normalized_distance_traveled
             + float(fitness_cfg["alive_reward"]) * self.steps
             + float(fitness_cfg["fuel_remaining_reward"]) * fuel_ratio
             - float(fitness_cfg["empty_mine_penalty"]) * self.empty_mine_attempts
@@ -531,6 +540,7 @@ class SpaceMinerEnv:
             empty_mine_attempts=self.empty_mine_attempts,
             idle_frames=self.idle_frames,
             progress=self.progress_sum,
+            distance_traveled=self.distance_traveled,
             danger=self.danger_sum,
         )
 
@@ -727,6 +737,7 @@ def summarize_metrics(metrics):
         "empty_mine_attempts": sum(metric.empty_mine_attempts for metric in metrics) / count,
         "idle_frames": sum(metric.idle_frames for metric in metrics) / count,
         "progress": sum(metric.progress for metric in metrics) / count,
+        "distance_traveled": sum(metric.distance_traveled for metric in metrics) / count,
         "danger": sum(metric.danger for metric in metrics) / count,
         "worst_fitness": min(metric.fitness for metric in metrics),
         "best_fitness": max(metric.fitness for metric in metrics),
@@ -995,6 +1006,7 @@ def draw_stats(screen, font, env, action, color):
         f"Step: {env.steps}",
         f"Minerals: {env.ship.minerals}",
         f"Fuel: {env.ship.fuel:.1f}",
+        f"Distance: {env.distance_traveled:.0f}",
         f"Thrust: {action['thrust']:.2f}",
         f"Mine: {action['mine_signal']:.2f}",
     ]
