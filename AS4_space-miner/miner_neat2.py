@@ -4,7 +4,7 @@ import math
 import os
 import neat
 import time
-# POOR FITNESS FUNCTION - spin on own axis
+import configparser
 
 # Initialize pygame
 pygame.init()
@@ -21,6 +21,28 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
+DEFAULT_FITNESS_WEIGHTS = {
+    "minerals": 25.0,
+    "alive_time": 0.01,
+    "mineral_progress": 0.01,
+    "idle_penalty": 0.002,
+    "fuel_efficiency": 0.05,
+    "asteroid_collision_penalty": 0.001
+}
+
+
+def load_fitness_weights(config_file):
+    parser = configparser.ConfigParser()
+    parser.read(config_file)
+
+    weights = DEFAULT_FITNESS_WEIGHTS.copy()
+    if parser.has_section("FitnessWeights"):
+        for weight_name in weights:
+            if parser.has_option("FitnessWeights", weight_name):
+                weights[weight_name] = parser.getfloat("FitnessWeights", weight_name)
+
+    return weights
+
 # Game Classes (same as before)
 class Spaceship:
     def __init__(self):
@@ -29,6 +51,8 @@ class Spaceship:
         self.speed = 5
         self.angle = 0
         self.fuel = 100
+        self.fuel_used = 0
+        self.distance_travelled = 0
         self.minerals = 0
         self.radius = 15
 
@@ -36,7 +60,13 @@ class Spaceship:
         if self.fuel > 0:
             self.x = (self.x + dx) % WIDTH
             self.y = (self.y + dy) % HEIGHT
-            self.fuel -= 0.1
+            movement_distance = math.hypot(dx, dy)
+            fuel_cost = min(0.1, self.fuel)
+            self.fuel -= fuel_cost
+            self.fuel_used += fuel_cost
+            self.distance_travelled += movement_distance
+            return movement_distance
+        return 0
 
     def mine(self, minerals):
         for mineral in minerals[:]:
@@ -82,12 +112,36 @@ class Asteroid:
     def draw(self):
         pygame.draw.circle(screen, RED, (int(self.x), int(self.y)), self.radius)
 
+def calculate_fitness(
+    ship,
+    alive_time,
+    mineral_progress,
+    idle_time,
+    asteroid_collision,
+    fitness_weights
+):
+    fuel_efficiency = ship.minerals / max(ship.fuel_used, 1)
+    asteroid_penalty = alive_time if asteroid_collision else 0
+
+    return (
+        ship.minerals * fitness_weights["minerals"]
+        + alive_time * fitness_weights["alive_time"]
+        + mineral_progress * fitness_weights["mineral_progress"]
+        + fuel_efficiency * fitness_weights["fuel_efficiency"]
+        - idle_time * fitness_weights["idle_penalty"]
+        - asteroid_penalty * fitness_weights["asteroid_collision_penalty"]
+    )
+
 def run_simulation(genome, config, visualizer=None):
     net = neat.nn.FeedForwardNetwork.create(genome, config)
+    fitness_weights = getattr(config, "fitness_weights", DEFAULT_FITNESS_WEIGHTS)
     ship = Spaceship()
     minerals = [Mineral() for _ in range(5)]
     asteroids = [Asteroid() for _ in range(8)]
     alive_time = 0
+    mineral_progress = 0
+    mineral_best_distances = {}
+    idle_time = 0
     
     while True:
         alive_time += 1
@@ -102,6 +156,11 @@ def run_simulation(genome, config, visualizer=None):
         closest_mineral = min((m for m in minerals), 
                             key=lambda m: math.hypot(ship.x-m.x, ship.y-m.y), 
                             default=None)
+        if closest_mineral and closest_mineral not in mineral_best_distances:
+            mineral_best_distances[closest_mineral] = math.hypot(
+                ship.x - closest_mineral.x,
+                ship.y - closest_mineral.y
+            )
         closest_asteroid = min((a for a in asteroids), 
                               key=lambda a: math.hypot(ship.x-a.x, ship.y-a.y))
         
@@ -117,15 +176,32 @@ def run_simulation(genome, config, visualizer=None):
         output = net.activate(inputs)
         
         # Execute actions
+        movement_distance = 0
         ship.angle += (output[0] * 2 - 1) * 0.1  # Turn (-1 to 1)
         if output[1] > 0.5:  # Thrust
             dx = ship.speed * math.cos(ship.angle)
             dy = ship.speed * math.sin(ship.angle)
-            ship.move(dx, dy)
+            movement_distance = ship.move(dx, dy)
+        if movement_distance == 0:
+            idle_time += 1
+        if closest_mineral:
+            target_distance_after = math.hypot(
+                ship.x - closest_mineral.x,
+                ship.y - closest_mineral.y
+            )
+            best_distance = mineral_best_distances[closest_mineral]
+            if target_distance_after < best_distance:
+                mineral_progress += best_distance - target_distance_after
+                mineral_best_distances[closest_mineral] = target_distance_after
         if output[2] > 0.5:  # Mine
             ship.mine(minerals)
             if len(minerals) < 3:  # Replenish minerals
                 minerals.extend(Mineral() for _ in range(2))
+            mineral_best_distances = {
+                mineral: distance
+                for mineral, distance in mineral_best_distances.items()
+                if mineral in minerals
+            }
 
         # Asteroids are part of the simulation, not just the visualization.
         # Move them during both headless training and rendered playback so
@@ -133,8 +209,22 @@ def run_simulation(genome, config, visualizer=None):
         for asteroid in asteroids:
             asteroid.move()
         
-        # Calculate fitness - reward both survival and mining
-        genome.fitness = ship.minerals * 10 + alive_time * 0.01  # Reduced time bonus
+        # Termination conditions
+        asteroid_collision = any(
+            math.hypot(ship.x - asteroid.x, ship.y - asteroid.y) < ship.radius + asteroid.radius
+            for asteroid in asteroids
+        )
+        out_of_fuel = ship.fuel <= 0
+        no_minerals_left = not minerals and ship.minerals == 0
+
+        genome.fitness = calculate_fitness(
+            ship,
+            alive_time,
+            mineral_progress,
+            idle_time,
+            asteroid_collision,
+            fitness_weights
+        )
         
         # Visualization
         if visualizer:
@@ -147,14 +237,6 @@ def run_simulation(genome, config, visualizer=None):
             visualizer.draw_stats(screen, genome.fitness, ship.minerals, ship.fuel)
             pygame.display.flip()
             clock.tick(30)
-        
-        # Termination conditions
-        asteroid_collision = any(
-            math.hypot(ship.x - asteroid.x, ship.y - asteroid.y) < ship.radius + asteroid.radius
-            for asteroid in asteroids
-        )
-        out_of_fuel = ship.fuel <= 0
-        no_minerals_left = not minerals and ship.minerals == 0
         
         if asteroid_collision or out_of_fuel or no_minerals_left or alive_time >= 5000:
             break
@@ -223,6 +305,7 @@ def run_neat(config_file):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
                         config_file)
+    config.fitness_weights = load_fitness_weights(config_file)
     config.visualizer = TrainingVisualizer()
     
     # Create population

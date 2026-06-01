@@ -4,6 +4,14 @@ fitness_threshold     = 10000
 pop_size              = 200
 reset_on_extinction   = 1
 
+[FitnessWeights]
+minerals                   = 25.5
+alive_time                 = 0.001
+mineral_progress           = 0.005
+idle_penalty               = 0.003
+fuel_efficiency            = 0.03
+asteroid_collision_penalty = 0.0015
+
 [DefaultGenome]
 num_inputs              = 4
 num_hidden              = 3
