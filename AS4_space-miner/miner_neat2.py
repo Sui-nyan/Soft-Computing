@@ -1,4 +1,6 @@
-﻿import pygame
+﻿import pickle
+
+import pygame
 import random
 import math
 import os
@@ -323,10 +325,15 @@ def run_neat(config_file):
         print(f"Fitness: {winner.fitness:.1f}")
         print(f"Nodes: {len(winner.nodes)}")
         print(f"Connections: {len(winner.connections)}")
+        
+        return winner
     finally:
         pygame.quit()
 
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
     config_file = os.path.join(local_dir, "neat_config.txt")
-    run_neat(config_file)
+    winner = run_neat(config_file)
+    # save the best genome
+    with open("winner.pkl", "wb") as f:
+        pickle.dump(winner, f)
