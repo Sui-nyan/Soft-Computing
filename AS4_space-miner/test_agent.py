@@ -120,10 +120,9 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
     # 🌟 4. 根據老師的公式計算最終成績
     final_score = (alive_time / 4) + (ship.minerals * 100)
     print("-" * 30)
-    print("📊 最終測試成績單")
-    print(f"存活時間 (Frames): {alive_time}")
-    print(f"採集礦石數量: {ship.minerals}")
-    print(f"🏆 官方最終得分: {final_score:.2f}")
+    print(f"Time alive: {alive_time}")
+    print(f"Minerals gathered: {ship.minerals}")
+    print(f"Final Score: {final_score:.2f}")
     print("-" * 30)
 
     pygame.quit()
