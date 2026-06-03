@@ -29,7 +29,8 @@ DEFAULT_FITNESS_WEIGHTS = {
     "mineral_progress": 0.01,
     "idle_penalty": 0.002,
     "fuel_efficiency": 0.05,
-    "asteroid_collision_penalty": 0.001
+    "asteroid_collision_penalty": 0.001,
+    "steering_penalty": 0.001
 }
 
 
@@ -100,12 +101,24 @@ class Mineral:
         pygame.draw.circle(screen, YELLOW, (self.x, self.y), self.radius)
 
 class Asteroid:
+    _coordinates = [(553,323), (124,303), (556,82), (490,425), (120,218), (774,142), (240,308), (64,475), (651,227), (462,77),]
+    _radius = [28, 15, 15, 22, 29, 17, 24, 22, 23, 17,]
+    _speed = [(1.78425438642474,0.6732917959108602), (0.3526239655425698,-1.295737594576594), (0.9002543984134839,-0.1395601523204939), 
+              (-0.5781368926686516,1.349036516126493), (1.8150210404495417,1.2741322355662592), (1.2831373928635355,0.8453257857927245), 
+              (-1.8228539352311386,-1.38841117002117), (-0.9822217473337984,1.8758459317074854), (0.04980714264573827,0.5986537138756898), 
+              (0.8160687662014605,-1.0618283414551777)]
+    _index = 0
+
+    @staticmethod
+    def get_next_coord():
+        coord = Asteroid._coordinates[Asteroid._index]
+        radius = Asteroid._radius[Asteroid._index]
+        speed = Asteroid._speed[Asteroid._index]
+        Asteroid._index = (Asteroid._index + 1) % len(Asteroid._coordinates)  # Cycle through
+        return coord, radius, speed
+    
     def __init__(self):
-        self.x = random.randint(0, WIDTH)
-        self.y = random.randint(0, HEIGHT)
-        self.radius = random.randint(15, 30)
-        self.speed_x = random.uniform(-2, 2)
-        self.speed_y = random.uniform(-2, 2)
+        (self.x, self.y), self.radius, (self.speed_x, self.speed_y) = Asteroid.get_next_coord()  # Get next fixed coordinate
 
     def move(self):
         self.x = (self.x + self.speed_x) % WIDTH
@@ -120,6 +133,7 @@ def calculate_fitness(
     mineral_progress,
     idle_time,
     asteroid_collision,
+    cumulative_steering,
     fitness_weights
 ):
     fuel_efficiency = ship.minerals / max(ship.fuel_used, 1)
@@ -132,6 +146,7 @@ def calculate_fitness(
         + fuel_efficiency * fitness_weights["fuel_efficiency"]
         - idle_time * fitness_weights["idle_penalty"]
         - asteroid_penalty * fitness_weights["asteroid_collision_penalty"]
+        - cumulative_steering * fitness_weights["steering_penalty"]
     )
 
 def run_simulation(genome, config, visualizer=None):
@@ -144,6 +159,7 @@ def run_simulation(genome, config, visualizer=None):
     mineral_progress = 0
     mineral_best_distances = {}
     idle_time = 0
+    cumulative_steering = 0
     
     while True:
         alive_time += 1
@@ -179,7 +195,9 @@ def run_simulation(genome, config, visualizer=None):
         
         # Execute actions
         movement_distance = 0
-        ship.angle += (output[0] * 2 - 1) * 0.1  # Turn (-1 to 1)
+        steering_command = (output[0] * 2 - 1) * 0.1  # Turn (-1 to 1)
+        ship.angle += steering_command
+        cumulative_steering += abs(steering_command)  # Track total steering magnitude
         if output[1] > 0.5:  # Thrust
             dx = ship.speed * math.cos(ship.angle)
             dy = ship.speed * math.sin(ship.angle)
@@ -225,6 +243,7 @@ def run_simulation(genome, config, visualizer=None):
             mineral_progress,
             idle_time,
             asteroid_collision,
+            cumulative_steering,
             fitness_weights
         )
         
