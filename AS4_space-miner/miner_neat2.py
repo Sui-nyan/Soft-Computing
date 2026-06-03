@@ -23,7 +23,7 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
-GENERATIONS = 15
+GENERATIONS = 7
 
 DEFAULT_FITNESS_WEIGHTS = {
     "minerals": 25.0,
@@ -36,7 +36,7 @@ DEFAULT_FITNESS_WEIGHTS = {
     "asteroid_proximity_penalty": 0.01
 }
 
-ASTEROID_PROXIMITY_THRESHOLD = 80
+ASTEROID_PROXIMITY_THRESHOLD = 30
 
 
 def wrap_delta(delta, size):
