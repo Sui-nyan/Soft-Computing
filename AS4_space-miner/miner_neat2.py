@@ -23,6 +23,8 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
+GENERATIONS = 15
+
 DEFAULT_FITNESS_WEIGHTS = {
     "minerals": 25.0,
     "alive_time": 0.01,
@@ -30,8 +32,32 @@ DEFAULT_FITNESS_WEIGHTS = {
     "idle_penalty": 0.002,
     "fuel_efficiency": 0.05,
     "asteroid_collision_penalty": 0.001,
-    "steering_penalty": 0.001
+    "steering_penalty": 0.001,
+    "asteroid_proximity_penalty": 0.01
 }
+
+ASTEROID_PROXIMITY_THRESHOLD = 80
+
+
+def wrap_delta(delta, size):
+    half = size / 2
+    if delta > half:
+        delta -= size
+    elif delta < -half:
+        delta += size
+    return delta
+
+
+def relative_position(source, target):
+    return (
+        wrap_delta(target.x - source.x, WIDTH),
+        wrap_delta(target.y - source.y, HEIGHT),
+    )
+
+
+def distance_between(source, target):
+    dx, dy = relative_position(source, target)
+    return math.hypot(dx, dy)
 
 
 def load_fitness_weights(config_file):
@@ -73,7 +99,7 @@ class Spaceship:
 
     def mine(self, minerals):
         for mineral in minerals[:]:
-            dist = math.hypot(self.x - mineral.x, self.y - mineral.y)
+            dist = distance_between(self, mineral)
             if dist < self.radius + mineral.radius:
                 minerals.remove(mineral)
                 self.minerals += 1
@@ -134,6 +160,7 @@ def calculate_fitness(
     idle_time,
     asteroid_collision,
     cumulative_steering,
+    asteroid_proximity,
     fitness_weights
 ):
     fuel_efficiency = ship.minerals / max(ship.fuel_used, 1)
@@ -147,7 +174,15 @@ def calculate_fitness(
         - idle_time * fitness_weights["idle_penalty"]
         - asteroid_penalty * fitness_weights["asteroid_collision_penalty"]
         - cumulative_steering * fitness_weights["steering_penalty"]
+        - asteroid_proximity * fitness_weights["asteroid_proximity_penalty"]
     )
+
+def relative_angle_to(ship, target):
+    dx, dy = relative_position(ship, target)
+    target_angle = math.atan2(dy, dx)
+    angle_delta = target_angle - ship.angle
+    return math.atan2(math.sin(angle_delta), math.cos(angle_delta))
+
 
 def run_simulation(genome, config, visualizer=None):
     net = neat.nn.FeedForwardNetwork.create(genome, config)
@@ -160,6 +195,8 @@ def run_simulation(genome, config, visualizer=None):
     mineral_best_distances = {}
     idle_time = 0
     cumulative_steering = 0
+    asteroid_proximity = 0
+    max_distance = math.hypot(WIDTH, HEIGHT)
     
     while True:
         alive_time += 1
@@ -172,21 +209,32 @@ def run_simulation(genome, config, visualizer=None):
         
         # Find closest objects
         closest_mineral = min((m for m in minerals), 
-                            key=lambda m: math.hypot(ship.x-m.x, ship.y-m.y), 
+                            key=lambda m: distance_between(ship, m),
                             default=None)
         if closest_mineral and closest_mineral not in mineral_best_distances:
-            mineral_best_distances[closest_mineral] = math.hypot(
-                ship.x - closest_mineral.x,
-                ship.y - closest_mineral.y
-            )
+            mineral_best_distances[closest_mineral] = distance_between(ship, closest_mineral)
         closest_asteroid = min((a for a in asteroids), 
-                              key=lambda a: math.hypot(ship.x-a.x, ship.y-a.y))
+                              key=lambda a: distance_between(ship, a))
         
+        mineral_distance = (
+            distance_between(ship, closest_mineral) / max_distance
+            if closest_mineral else 0
+        )
+        mineral_relative_angle = (
+            relative_angle_to(ship, closest_mineral) / math.pi
+            if closest_mineral else 0
+        )
+        asteroid_distance = (
+            distance_between(ship, closest_asteroid) / max_distance
+        )
+        asteroid_relative_angle = relative_angle_to(ship, closest_asteroid) / math.pi
+
         # Get inputs (handle case where all minerals are collected)
         inputs = [
-            math.hypot(ship.x - closest_mineral.x)/WIDTH if closest_mineral else 0,
-            math.atan2(closest_mineral.y-ship.y, closest_mineral.x-ship.x)/math.pi if closest_mineral else 0,
-            math.hypot(ship.x - closest_asteroid.x)/WIDTH,
+            mineral_distance,
+            mineral_relative_angle,
+            asteroid_distance,
+            asteroid_relative_angle,
             ship.fuel / 100.0
         ]
         
@@ -204,11 +252,17 @@ def run_simulation(genome, config, visualizer=None):
             movement_distance = ship.move(dx, dy)
         if movement_distance == 0:
             idle_time += 1
-        if closest_mineral:
-            target_distance_after = math.hypot(
-                ship.x - closest_mineral.x,
-                ship.y - closest_mineral.y
+        else:
+            asteroid_clearance = max(
+                0,
+                distance_between(ship, closest_asteroid) - ship.radius - closest_asteroid.radius
             )
+            if asteroid_clearance < ASTEROID_PROXIMITY_THRESHOLD:
+                asteroid_proximity += (
+                    ASTEROID_PROXIMITY_THRESHOLD - asteroid_clearance
+                ) / ASTEROID_PROXIMITY_THRESHOLD
+        if closest_mineral:
+            target_distance_after = distance_between(ship, closest_mineral)
             best_distance = mineral_best_distances[closest_mineral]
             if target_distance_after < best_distance:
                 mineral_progress += best_distance - target_distance_after
@@ -231,7 +285,7 @@ def run_simulation(genome, config, visualizer=None):
         
         # Termination conditions
         asteroid_collision = any(
-            math.hypot(ship.x - asteroid.x, ship.y - asteroid.y) < ship.radius + asteroid.radius
+            distance_between(ship, asteroid) < ship.radius + asteroid.radius
             for asteroid in asteroids
         )
         out_of_fuel = ship.fuel <= 0
@@ -244,6 +298,7 @@ def run_simulation(genome, config, visualizer=None):
             idle_time,
             asteroid_collision,
             cumulative_steering,
+            asteroid_proximity,
             fitness_weights
         )
         
@@ -339,7 +394,7 @@ def run_neat(config_file):
     
     # Run NEAT
     try:
-        winner = population.run(eval_genomes, 50)
+        winner = population.run(eval_genomes, GENERATIONS)
         print("\nTraining complete! Final best genome:")
         print(f"Fitness: {winner.fitness:.1f}")
         print(f"Nodes: {len(winner.nodes)}")

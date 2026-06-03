@@ -7,6 +7,12 @@ import math
 # 🌟 1. 載入老師規定的固定測試環境 (期末考場)
 from miner_harness import Spaceship, Mineral, Asteroid 
 
+def relative_angle_to(ship, target):
+    target_angle = math.atan2(target.y - ship.y, target.x - ship.x)
+    angle_delta = target_angle - ship.angle
+    return math.atan2(math.sin(angle_delta), math.cos(angle_delta))
+
+
 def test_best_agent(config_file, genome_path="winner.pkl"):
     # --- 載入大腦與設定 ---
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
@@ -26,6 +32,7 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("AI 最終測試展示")
     clock = pygame.time.Clock()
+    max_distance = math.hypot(WIDTH, HEIGHT)
 
     # 產生固定位置的物件
     ship = Spaceship()
@@ -48,13 +55,29 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
         closest_mineral = min((m for m in minerals), key=lambda m: math.hypot(ship.x-m.x, ship.y-m.y), default=None)
         closest_asteroid = min((a for a in asteroids), key=lambda a: math.hypot(ship.x-a.x, ship.y-a.y))
         
-        # 🌟 2. 讓 AI 看環境 (這裡的 5 個 inputs 必須跟訓練時一模一樣)
+        
+        mineral_distance = (
+            math.hypot(ship.x - closest_mineral.x, ship.y - closest_mineral.y) / max_distance
+            if closest_mineral else 0
+        )
+        mineral_relative_angle = (
+            relative_angle_to(ship, closest_mineral) / math.pi
+            if closest_mineral else 0
+        )
+        asteroid_distance = (
+            math.hypot(ship.x - closest_asteroid.x, ship.y - closest_asteroid.y) / max_distance
+        )
+        asteroid_relative_angle = relative_angle_to(ship, closest_asteroid) / math.pi
+
+        # Get inputs (handle case where all minerals are collected)
         inputs = [
-            math.hypot(ship.x - closest_mineral.x)/WIDTH if closest_mineral else 0,
-            math.atan2(closest_mineral.y-ship.y, closest_mineral.x-ship.x)/math.pi if closest_mineral else 0,
-            math.hypot(ship.x - closest_asteroid.x)/WIDTH,
+            mineral_distance,
+            mineral_relative_angle,
+            asteroid_distance,
+            asteroid_relative_angle,
             ship.fuel / 100.0
         ]
+        
         
 
         # 讓 AI 思考並做出動作
