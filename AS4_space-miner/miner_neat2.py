@@ -23,20 +23,20 @@ GREEN = (0, 255, 0)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
-GENERATIONS = 7
+GENERATIONS = 10
 
 DEFAULT_FITNESS_WEIGHTS = {
     "minerals": 25.0,
     "alive_time": 0.01,
     "mineral_progress": 0.01,
-    "idle_penalty": 0.002,
+    "idle_penalty": 0.000,
     "fuel_efficiency": 0.05,
     "asteroid_collision_penalty": 0.001,
     "steering_penalty": 0.001,
     "asteroid_proximity_penalty": 0.01
 }
 
-ASTEROID_PROXIMITY_THRESHOLD = 30
+ASTEROID_PROXIMITY_THRESHOLD = 20
 
 
 def wrap_delta(delta, size):
@@ -84,17 +84,23 @@ class Spaceship:
         self.distance_travelled = 0
         self.minerals = 0
         self.radius = 15
+        self.velocity_x = 0
+        self.velocity_y = 0
 
     def move(self, dx, dy):
         if self.fuel > 0:
             self.x = (self.x + dx) % WIDTH
             self.y = (self.y + dy) % HEIGHT
+            self.velocity_x = dx
+            self.velocity_y = dy
             movement_distance = math.hypot(dx, dy)
             fuel_cost = min(0.1, self.fuel)
             self.fuel -= fuel_cost
             self.fuel_used += fuel_cost
             self.distance_travelled += movement_distance
             return movement_distance
+        self.velocity_x = 0
+        self.velocity_y = 0
         return 0
 
     def mine(self, minerals):
@@ -184,6 +190,46 @@ def relative_angle_to(ship, target):
     return math.atan2(math.sin(angle_delta), math.cos(angle_delta))
 
 
+def normalized_relative_vector(source, target):
+    dx, dy = relative_position(source, target)
+    return dx / (WIDTH / 2), dy / (HEIGHT / 2)
+
+
+def asteroid_in_front(ship, asteroid):
+    dx, dy = relative_position(ship, asteroid)
+    distance = math.hypot(dx, dy)
+    if distance == 0:
+        return 1
+
+    heading_x = math.cos(ship.angle)
+    heading_y = math.sin(ship.angle)
+    return max(0, (heading_x * dx + heading_y * dy) / distance)
+
+
+def asteroid_time_to_collision_signal(ship, asteroid, horizon=120):
+    dx, dy = relative_position(ship, asteroid)
+    relative_vx = asteroid.speed_x - ship.velocity_x
+    relative_vy = asteroid.speed_y - ship.velocity_y
+    relative_speed_sq = relative_vx * relative_vx + relative_vy * relative_vy
+    if relative_speed_sq == 0:
+        return 0
+
+    time_to_closest = -(
+        dx * relative_vx + dy * relative_vy
+    ) / relative_speed_sq
+    if time_to_closest < 0 or time_to_closest > horizon:
+        return 0
+
+    closest_x = dx + relative_vx * time_to_closest
+    closest_y = dy + relative_vy * time_to_closest
+    closest_distance = math.hypot(closest_x, closest_y)
+    danger_radius = ship.radius + asteroid.radius + ASTEROID_PROXIMITY_THRESHOLD
+    if closest_distance > danger_radius:
+        return 0
+
+    return 1 - (time_to_closest / horizon)
+
+
 def run_simulation(genome, config, visualizer=None):
     net = neat.nn.FeedForwardNetwork.create(genome, config)
     fitness_weights = getattr(config, "fitness_weights", DEFAULT_FITNESS_WEIGHTS)
@@ -228,6 +274,16 @@ def run_simulation(genome, config, visualizer=None):
             distance_between(ship, closest_asteroid) / max_distance
         )
         asteroid_relative_angle = relative_angle_to(ship, closest_asteroid) / math.pi
+        mineral_relative_x, mineral_relative_y = (
+            normalized_relative_vector(ship, closest_mineral)
+            if closest_mineral else (0, 0)
+        )
+        asteroid_relative_x, asteroid_relative_y = normalized_relative_vector(
+            ship,
+            closest_asteroid
+        )
+        asteroid_velocity_x = closest_asteroid.speed_x / ship.speed
+        asteroid_velocity_y = closest_asteroid.speed_y / ship.speed
 
         # Get inputs (handle case where all minerals are collected)
         inputs = [
@@ -235,7 +291,15 @@ def run_simulation(genome, config, visualizer=None):
             mineral_relative_angle,
             asteroid_distance,
             asteroid_relative_angle,
-            ship.fuel / 100.0
+            ship.fuel / 100.0,
+            mineral_relative_x,
+            mineral_relative_y,
+            asteroid_relative_x,
+            asteroid_relative_y,
+            asteroid_velocity_x,
+            asteroid_velocity_y,
+            asteroid_in_front(ship, closest_asteroid),
+            asteroid_time_to_collision_signal(ship, closest_asteroid)
         ]
         
         # Get actions from network
@@ -250,6 +314,9 @@ def run_simulation(genome, config, visualizer=None):
             dx = ship.speed * math.cos(ship.angle)
             dy = ship.speed * math.sin(ship.angle)
             movement_distance = ship.move(dx, dy)
+        else:
+            ship.velocity_x = 0
+            ship.velocity_y = 0
         if movement_distance == 0:
             idle_time += 1
         else:
