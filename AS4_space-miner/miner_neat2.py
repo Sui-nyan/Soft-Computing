@@ -29,6 +29,8 @@ DEFAULT_FITNESS_WEIGHTS = {
     "minerals": 25.0,
     "alive_time": 0.01,
     "mineral_progress": 0.01,
+    "mineral_approach": 0.05,
+    "mineral_heading_alignment": 0.005,
     "idle_penalty": 0.000,
     "fuel_efficiency": 0.05,
     "asteroid_collision_penalty": 0.001,
@@ -163,6 +165,8 @@ def calculate_fitness(
     ship,
     alive_time,
     mineral_progress,
+    mineral_approach,
+    mineral_heading_alignment,
     idle_time,
     asteroid_collision,
     cumulative_steering,
@@ -176,6 +180,8 @@ def calculate_fitness(
         ship.minerals * fitness_weights["minerals"]
         + alive_time * fitness_weights["alive_time"]
         + mineral_progress * fitness_weights["mineral_progress"]
+        + mineral_approach * fitness_weights["mineral_approach"]
+        + mineral_heading_alignment * fitness_weights["mineral_heading_alignment"]
         + fuel_efficiency * fitness_weights["fuel_efficiency"]
         - idle_time * fitness_weights["idle_penalty"]
         - asteroid_penalty * fitness_weights["asteroid_collision_penalty"]
@@ -238,6 +244,8 @@ def run_simulation(genome, config, visualizer=None):
     asteroids = [Asteroid() for _ in range(8)]
     alive_time = 0
     mineral_progress = 0
+    mineral_approach = 0
+    mineral_heading_alignment = 0
     mineral_best_distances = {}
     idle_time = 0
     cumulative_steering = 0
@@ -261,6 +269,10 @@ def run_simulation(genome, config, visualizer=None):
             mineral_best_distances[closest_mineral] = distance_between(ship, closest_mineral)
         closest_asteroid = min((a for a in asteroids), 
                               key=lambda a: distance_between(ship, a))
+        target_distance_before = (
+            distance_between(ship, closest_mineral)
+            if closest_mineral else None
+        )
         
         mineral_distance = (
             distance_between(ship, closest_mineral) / max_distance
@@ -330,6 +342,8 @@ def run_simulation(genome, config, visualizer=None):
                 ) / ASTEROID_PROXIMITY_THRESHOLD
         if closest_mineral:
             target_distance_after = distance_between(ship, closest_mineral)
+            mineral_approach += target_distance_before - target_distance_after
+            mineral_heading_alignment += math.cos(relative_angle_to(ship, closest_mineral))
             best_distance = mineral_best_distances[closest_mineral]
             if target_distance_after < best_distance:
                 mineral_progress += best_distance - target_distance_after
@@ -362,6 +376,8 @@ def run_simulation(genome, config, visualizer=None):
             ship,
             alive_time,
             mineral_progress,
+            mineral_approach,
+            mineral_heading_alignment,
             idle_time,
             asteroid_collision,
             cumulative_steering,

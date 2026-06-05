@@ -5,9 +5,11 @@ pop_size              = 200
 reset_on_extinction   = 1
 
 [FitnessWeights]
-minerals                   = 30.0
-alive_time                 = 0.002
-mineral_progress           = 0.05
+minerals                   = 35.5
+alive_time                 = 0.0001
+mineral_progress           = 0.005
+mineral_approach           = 0.05
+mineral_heading_alignment  = 0.0045
 idle_penalty               = 0.0035
 fuel_efficiency            = 0.03
 asteroid_collision_penalty = 0.002
