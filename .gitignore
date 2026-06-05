@@ -186,3 +186,5 @@ cython_debug/
 .idea
 *.json
 *.csv
+
+AS4_space-miner/artifacts
