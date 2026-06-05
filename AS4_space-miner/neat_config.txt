@@ -15,7 +15,7 @@ steering_penalty = 0.002
 asteroid_proximity_penalty = 0.0015
 
 [DefaultGenome]
-num_inputs              = 5
+num_inputs              = 13
 num_hidden              = 3
 num_outputs             = 3
 initial_connection      = full_direct
