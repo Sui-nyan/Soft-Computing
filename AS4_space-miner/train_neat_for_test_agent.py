@@ -30,7 +30,9 @@ from train_neat_for_test_agent_config import (
     MAX_FRAMES,
     MINE_THRESHOLD,
     MINERAL_APPROACH_WEIGHT,
+    MINERAL_ALIGNMENT_WEIGHT,
     MINERAL_PROGRESS_WEIGHT,
+    MINERAL_VELOCITY_WEIGHT,
     MINERAL_REFILL_COUNT,
     MINERAL_REFILL_THRESHOLD,
     MINING_REFUEL_AMOUNT,
@@ -192,6 +194,8 @@ def run_episode(genome, config):
     ship_velocity_y = 0
     mineral_progress = 0
     mineral_approach = 0
+    mineral_alignment = 0
+    mineral_velocity = 0
     mineral_best_distances = {}
     fuel_used = 0
     asteroid_danger = 0
@@ -210,6 +214,8 @@ def run_episode(genome, config):
                     death_reason,
                     mineral_progress,
                     mineral_approach,
+                    mineral_alignment,
+                    mineral_velocity,
                     fuel_used,
                     asteroid_danger,
                     idle_time,
@@ -251,6 +257,16 @@ def run_episode(genome, config):
         if closest_mineral and target_distance_before is not None:
             target_distance_after = distance_between(ship, closest_mineral)
             mineral_distance_delta = target_distance_before - target_distance_after
+            mineral_alignment += max(0, math.cos(relative_angle_to(ship, closest_mineral)))
+
+            mineral_dx, mineral_dy = relative_position(ship, closest_mineral)
+            mineral_distance = max(math.hypot(mineral_dx, mineral_dy), 1)
+            movement_toward_mineral = (
+                ship_velocity_x * mineral_dx + ship_velocity_y * mineral_dy
+            ) / mineral_distance
+            if movement_toward_mineral > 0:
+                mineral_velocity += movement_toward_mineral
+
             if mineral_distance_delta > 0:
                 mineral_approach += mineral_distance_delta
 
@@ -288,9 +304,9 @@ def run_episode(genome, config):
                 ASTEROID_DANGER_MARGIN - max(0, asteroid_clearance)
             ) / ASTEROID_DANGER_MARGIN
 
-        asteroid_collision = (
-            distance_between(ship, closest_asteroid)
-            < ship.radius + closest_asteroid.radius
+        asteroid_collision = any(
+            distance_between(ship, asteroid) < ship.radius + asteroid.radius
+            for asteroid in asteroids
         )
         out_of_fuel = ship.fuel <= 0
 
@@ -307,6 +323,8 @@ def run_episode(genome, config):
         death_reason,
         mineral_progress,
         mineral_approach,
+        mineral_alignment,
+        mineral_velocity,
         fuel_used,
         asteroid_danger,
         idle_time,
@@ -321,6 +339,8 @@ def score_episode(
     death_reason,
     mineral_progress,
     mineral_approach,
+    mineral_alignment,
+    mineral_velocity,
     fuel_used,
     asteroid_danger,
     idle_time,
@@ -334,6 +354,8 @@ def score_episode(
     fitness = test_score
     fitness += mineral_progress * MINERAL_PROGRESS_WEIGHT
     fitness += mineral_approach * MINERAL_APPROACH_WEIGHT
+    fitness += mineral_alignment * MINERAL_ALIGNMENT_WEIGHT
+    fitness += mineral_velocity * MINERAL_VELOCITY_WEIGHT
     fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
     fitness += ship.fuel * REMAINING_FUEL_WEIGHT
     fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
@@ -355,6 +377,8 @@ def score_episode(
         "fuel_efficiency": fuel_efficiency,
         "mineral_approach": mineral_approach,
         "mineral_progress": mineral_progress,
+        "mineral_alignment": mineral_alignment,
+        "mineral_velocity": mineral_velocity,
         "death_reason": death_reason,
     }
 
@@ -404,6 +428,12 @@ def train(config_path, output_path, generations):
     population.add_reporter(neat.StatisticsReporter())
 
     winner = population.run(eval_genomes, generations)
+
+    output_path = os.path.abspath(output_path)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "wb") as f:
+        pickle.dump(winner, f)
+    print(f"Saved winner to: {output_path}")
 
     return winner
 
