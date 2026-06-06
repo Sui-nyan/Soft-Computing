@@ -24,14 +24,18 @@ BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
 GENERATIONS = 10
+SENSOR_TARGET_COUNT = 2
+FAR_FROM_MINERAL_DISTANCE = 0.35
 
 DEFAULT_FITNESS_WEIGHTS = {
     "minerals": 25.0,
     "alive_time": 0.01,
     "mineral_progress": 0.01,
     "mineral_approach": 0.05,
+    "mineral_retreat_penalty": 0.025,
     "mineral_heading_alignment": 0.005,
-    "idle_penalty": 0.000,
+    "idle_penalty": 0.0035,
+    "indecision_penalty": 0.01,
     "fuel_efficiency": 0.05,
     "asteroid_collision_penalty": 0.001,
     "steering_penalty": 0.001,
@@ -171,23 +175,34 @@ def calculate_fitness(
     asteroid_collision,
     cumulative_steering,
     asteroid_proximity,
-    fitness_weights
+    fitness_weights,
+    mineral_retreat=0,
+    indecision=0,
+    return_components=False
 ):
     fuel_efficiency = ship.minerals / max(ship.fuel_used, 1)
     asteroid_penalty = alive_time if asteroid_collision else 0
+    get_weight = lambda name: fitness_weights.get(name, DEFAULT_FITNESS_WEIGHTS[name])
 
-    return (
-        ship.minerals * fitness_weights["minerals"]
-        + alive_time * fitness_weights["alive_time"]
-        + mineral_progress * fitness_weights["mineral_progress"]
-        + mineral_approach * fitness_weights["mineral_approach"]
-        + mineral_heading_alignment * fitness_weights["mineral_heading_alignment"]
-        + fuel_efficiency * fitness_weights["fuel_efficiency"]
-        - idle_time * fitness_weights["idle_penalty"]
-        - asteroid_penalty * fitness_weights["asteroid_collision_penalty"]
-        - cumulative_steering * fitness_weights["steering_penalty"]
-        - asteroid_proximity * fitness_weights["asteroid_proximity_penalty"]
-    )
+    components = {
+        "minerals": ship.minerals * get_weight("minerals"),
+        "alive": alive_time * get_weight("alive_time"),
+        "progress": mineral_progress * get_weight("mineral_progress"),
+        "approach": mineral_approach * get_weight("mineral_approach"),
+        "heading": mineral_heading_alignment * get_weight("mineral_heading_alignment"),
+        "fuel_efficiency": fuel_efficiency * get_weight("fuel_efficiency"),
+        "idle": -idle_time * get_weight("idle_penalty"),
+        "retreat": -mineral_retreat * get_weight("mineral_retreat_penalty"),
+        "indecision": -indecision * get_weight("indecision_penalty"),
+        "collision": -asteroid_penalty * get_weight("asteroid_collision_penalty"),
+        "steering": -cumulative_steering * get_weight("steering_penalty"),
+        "asteroid_proximity": -asteroid_proximity * get_weight("asteroid_proximity_penalty"),
+    }
+
+    fitness = sum(components.values())
+    if return_components:
+        return fitness, components
+    return fitness
 
 def relative_angle_to(ship, target):
     dx, dy = relative_position(ship, target)
@@ -199,6 +214,57 @@ def relative_angle_to(ship, target):
 def normalized_relative_vector(source, target):
     dx, dy = relative_position(source, target)
     return dx / (WIDTH / 2), dy / (HEIGHT / 2)
+
+
+def nearest_objects(ship, objects, count):
+    return sorted(objects, key=lambda obj: distance_between(ship, obj))[:count]
+
+
+def mineral_sensor_values(ship, mineral, max_distance):
+    if mineral is None:
+        return [0, 0, 0, 0]
+
+    relative_x, relative_y = normalized_relative_vector(ship, mineral)
+    return [
+        distance_between(ship, mineral) / max_distance,
+        relative_angle_to(ship, mineral) / math.pi,
+        relative_x,
+        relative_y,
+    ]
+
+
+def asteroid_sensor_values(ship, asteroid, max_distance):
+    if asteroid is None:
+        return [0, 0, 0, 0, 0, 0, 0, 0]
+
+    relative_x, relative_y = normalized_relative_vector(ship, asteroid)
+    return [
+        distance_between(ship, asteroid) / max_distance,
+        relative_angle_to(ship, asteroid) / math.pi,
+        relative_x,
+        relative_y,
+        asteroid.speed_x / ship.speed,
+        asteroid.speed_y / ship.speed,
+        asteroid_in_front(ship, asteroid),
+        asteroid_time_to_collision_signal(ship, asteroid),
+    ]
+
+
+def build_neat_inputs(ship, minerals, asteroids, max_distance):
+    inputs = []
+
+    nearest_minerals = nearest_objects(ship, minerals, SENSOR_TARGET_COUNT)
+    for index in range(SENSOR_TARGET_COUNT):
+        mineral = nearest_minerals[index] if index < len(nearest_minerals) else None
+        inputs.extend(mineral_sensor_values(ship, mineral, max_distance))
+
+    nearest_asteroids = nearest_objects(ship, asteroids, SENSOR_TARGET_COUNT)
+    for index in range(SENSOR_TARGET_COUNT):
+        asteroid = nearest_asteroids[index] if index < len(nearest_asteroids) else None
+        inputs.extend(asteroid_sensor_values(ship, asteroid, max_distance))
+
+    inputs.append(ship.fuel / 100.0)
+    return inputs
 
 
 def asteroid_in_front(ship, asteroid):
@@ -245,9 +311,12 @@ def run_simulation(genome, config, visualizer=None):
     alive_time = 0
     mineral_progress = 0
     mineral_approach = 0
+    mineral_retreat = 0
     mineral_heading_alignment = 0
     mineral_best_distances = {}
     idle_time = 0
+    indecision = 0
+    frames_without_mineral_progress = 0
     cumulative_steering = 0
     asteroid_proximity = 0
     max_distance = math.hypot(WIDTH, HEIGHT)
@@ -273,46 +342,9 @@ def run_simulation(genome, config, visualizer=None):
             distance_between(ship, closest_mineral)
             if closest_mineral else None
         )
-        
-        mineral_distance = (
-            distance_between(ship, closest_mineral) / max_distance
-            if closest_mineral else 0
-        )
-        mineral_relative_angle = (
-            relative_angle_to(ship, closest_mineral) / math.pi
-            if closest_mineral else 0
-        )
-        asteroid_distance = (
-            distance_between(ship, closest_asteroid) / max_distance
-        )
-        asteroid_relative_angle = relative_angle_to(ship, closest_asteroid) / math.pi
-        mineral_relative_x, mineral_relative_y = (
-            normalized_relative_vector(ship, closest_mineral)
-            if closest_mineral else (0, 0)
-        )
-        asteroid_relative_x, asteroid_relative_y = normalized_relative_vector(
-            ship,
-            closest_asteroid
-        )
-        asteroid_velocity_x = closest_asteroid.speed_x / ship.speed
-        asteroid_velocity_y = closest_asteroid.speed_y / ship.speed
 
         # Get inputs (handle case where all minerals are collected)
-        inputs = [
-            mineral_distance,
-            mineral_relative_angle,
-            asteroid_distance,
-            asteroid_relative_angle,
-            ship.fuel / 100.0,
-            mineral_relative_x,
-            mineral_relative_y,
-            asteroid_relative_x,
-            asteroid_relative_y,
-            asteroid_velocity_x,
-            asteroid_velocity_y,
-            asteroid_in_front(ship, closest_asteroid),
-            asteroid_time_to_collision_signal(ship, closest_asteroid)
-        ]
+        inputs = build_neat_inputs(ship, minerals, asteroids, max_distance)
         
         # Get actions from network
         output = net.activate(inputs)
@@ -331,6 +363,15 @@ def run_simulation(genome, config, visualizer=None):
             ship.velocity_y = 0
         if movement_distance == 0:
             idle_time += 1
+            indecision += 1
+            if abs(steering_command) > 0.03:
+                indecision += 0.5
+            if (
+                closest_mineral
+                and target_distance_before is not None
+                and target_distance_before / max_distance > FAR_FROM_MINERAL_DISTANCE
+            ):
+                indecision += 0.5
         else:
             asteroid_clearance = max(
                 0,
@@ -342,7 +383,22 @@ def run_simulation(genome, config, visualizer=None):
                 ) / ASTEROID_PROXIMITY_THRESHOLD
         if closest_mineral:
             target_distance_after = distance_between(ship, closest_mineral)
-            mineral_approach += target_distance_before - target_distance_after
+            mineral_distance_delta = target_distance_before - target_distance_after
+            if mineral_distance_delta > 0:
+                mineral_approach += mineral_distance_delta
+                frames_without_mineral_progress = 0
+            elif mineral_distance_delta < 0:
+                mineral_retreat += -mineral_distance_delta
+                frames_without_mineral_progress += 1
+            else:
+                frames_without_mineral_progress += 1
+
+            if (
+                frames_without_mineral_progress > 30
+                and target_distance_after / max_distance > FAR_FROM_MINERAL_DISTANCE
+            ):
+                indecision += 0.25
+
             mineral_heading_alignment += math.cos(relative_angle_to(ship, closest_mineral))
             best_distance = mineral_best_distances[closest_mineral]
             if target_distance_after < best_distance:
@@ -372,7 +428,7 @@ def run_simulation(genome, config, visualizer=None):
         out_of_fuel = ship.fuel <= 0
         no_minerals_left = not minerals and ship.minerals == 0
 
-        genome.fitness = calculate_fitness(
+        genome.fitness, fitness_components = calculate_fitness(
             ship,
             alive_time,
             mineral_progress,
@@ -382,18 +438,58 @@ def run_simulation(genome, config, visualizer=None):
             asteroid_collision,
             cumulative_steering,
             asteroid_proximity,
-            fitness_weights
+            fitness_weights,
+            mineral_retreat,
+            indecision,
+            return_components=True
         )
         
         # Visualization
         if visualizer:
+            display_closest_mineral = min(
+                (m for m in minerals),
+                key=lambda m: distance_between(ship, m),
+                default=None
+            )
+            display_closest_asteroid = min(
+                (a for a in asteroids),
+                key=lambda a: distance_between(ship, a),
+                default=None
+            )
+            overlay_metrics = {
+                "alive_time": alive_time,
+                "nearest_mineral_distance": (
+                    distance_between(ship, display_closest_mineral)
+                    if display_closest_mineral else 0
+                ),
+                "nearest_asteroid_distance": (
+                    distance_between(ship, display_closest_asteroid)
+                    if display_closest_asteroid else 0
+                ),
+                "mineral_progress": mineral_progress,
+                "mineral_approach": mineral_approach,
+                "mineral_retreat": mineral_retreat,
+                "idle_time": idle_time,
+                "indecision": indecision,
+                "cumulative_steering": cumulative_steering,
+                "asteroid_proximity": asteroid_proximity,
+                "asteroid_collision": asteroid_collision,
+                "fuel_used": ship.fuel_used,
+                "fitness_components": fitness_components,
+            }
             screen.fill(BLACK)
             for mineral in minerals:
                 mineral.draw()
             for asteroid in asteroids:
                 asteroid.draw()
             ship.draw()
-            visualizer.draw_stats(screen, genome.fitness, ship.minerals, ship.fuel)
+            visualizer.draw_stats(
+                screen,
+                genome.fitness,
+                ship.minerals,
+                ship.fuel,
+                overlay_metrics
+            )
             pygame.display.flip()
             clock.tick(30)
         
@@ -406,6 +502,7 @@ class TrainingVisualizer:
         self.generation = 0
         self.start_time = time.time()
         self.font = pygame.font.SysFont(None, 36)
+        self.small_font = pygame.font.SysFont(None, 22)
         
     def update_generation(self, best_genome):
         self.generation += 1
@@ -414,7 +511,7 @@ class TrainingVisualizer:
             print(f"🔥 New best fitness: {self.best_fitness:.1f}")
         print(f"Generation {self.generation} best: {best_genome.fitness:.1f}")
 
-    def draw_stats(self, screen, fitness, minerals, fuel):
+    def draw_stats(self, screen, fitness, minerals, fuel, metrics=None):
         stats = [
             f"Gen: {self.generation}",
             f"Fitness: {fitness:.1f}",
@@ -422,10 +519,41 @@ class TrainingVisualizer:
             f"Minerals: {minerals}",
             f"Fuel: {fuel:.1f}"
         ]
-        
+
+        if metrics:
+            components = metrics["fitness_components"]
+            stats.extend([
+                f"Alive: {metrics['alive_time']}",
+                f"Near mineral: {metrics['nearest_mineral_distance']:.1f}",
+                f"Near asteroid: {metrics['nearest_asteroid_distance']:.1f}",
+                f"Progress+: {metrics['mineral_progress']:.1f}",
+                f"Approach+: {metrics['mineral_approach']:.1f}",
+                f"Retreat-: {metrics['mineral_retreat']:.1f}",
+                f"Idle: {metrics['idle_time']}",
+                f"Indecision-: {metrics['indecision']:.1f}",
+                f"Steering: {metrics['cumulative_steering']:.1f}",
+                f"Ast danger-: {metrics['asteroid_proximity']:.1f}",
+                f"Fuel used: {metrics['fuel_used']:.1f}",
+                f"Hit asteroid: {metrics['asteroid_collision']}",
+                f"Fit minerals: {components['minerals']:+.1f}",
+                f"Fit approach: {components['approach']:+.1f}",
+                f"Fit retreat: {components['retreat']:+.1f}",
+                f"Fit idle: {components['idle']:+.1f}",
+                f"Fit indecision: {components['indecision']:+.1f}",
+                f"Fit asteroid: {components['asteroid_proximity'] + components['collision']:+.1f}",
+            ])
+
+        overlay_height = 18 + 28 * 5 + max(0, len(stats) - 5) * 20
+        overlay = pygame.Surface((315, overlay_height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        screen.blit(overlay, (6, 6))
+
         for i, stat in enumerate(stats):
-            text = self.font.render(stat, True, WHITE)
-            screen.blit(text, (10, 10 + i * 40))
+            font = self.font if i < 5 else self.small_font
+            line_height = 28 if i < 5 else 20
+            y_offset = 10 + i * 28 if i < 5 else 10 + 5 * 28 + (i - 5) * line_height
+            text = font.render(stat, True, WHITE)
+            screen.blit(text, (10, y_offset))
 
 def eval_genomes(genomes, config):
     visualizer = config.visualizer
