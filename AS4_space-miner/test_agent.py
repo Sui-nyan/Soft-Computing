@@ -182,8 +182,7 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
             (a for a in asteroids),
             key=lambda a: distance_between(ship, a, WIDTH, HEIGHT)
         )
-        
-        
+
         mineral_distance = (
             distance_between(ship, closest_mineral, WIDTH, HEIGHT) / max_distance
             if closest_mineral else 0

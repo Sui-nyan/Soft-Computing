@@ -8,11 +8,11 @@ The miner evolves a feed-forward neural network with `neat-python`. Each genome 
 
 After all genomes in a generation are evaluated, NEAT keeps the best-performing structures, groups similar networks into species, applies mutation and crossover, and repeats this process for `GENERATIONS = 10`. The configured population size is 200, so each generation compares 200 candidate controllers. The best genome is saved as `winner.pkl`.
 
-The NEAT network is configured with 5 inputs, 3 hidden nodes, and 3 outputs. It starts as a fully connected feed-forward network and can mutate connection weights, biases, enabled connections, and topology.
+The NEAT network is configured with 13 inputs, 3 hidden nodes, and 3 outputs. It starts as a fully connected feed-forward network and can mutate connection weights, biases, enabled connections, and topology.
 
 ## Inputs
 
-The miner receives a compact state vector:
+The miner receives a compact state vector built from the closest mineral, the closest asteroid, and the ship's current fuel. Relative positions use wraparound distance, so the network sees the nearest direction across screen edges rather than being confused by objects near the opposite border.
 
 | Input | Meaning | Normalization |
 | --- | --- | --- |
@@ -21,8 +21,13 @@ The miner receives a compact state vector:
 | `asteroid_distance` | Distance from the ship to the closest asteroid. | Divided by the maximum screen diagonal distance. |
 | `asteroid_relative_angle` | Angle from the ship's current heading to the closest asteroid. | Divided by `pi`. |
 | `fuel` | Remaining ship fuel. | Divided by 100. |
+| `mineral_relative_x/y` | Wraparound relative vector from the ship to the closest mineral. | `x` divided by half screen width, `y` divided by half screen height. |
+| `asteroid_relative_x/y` | Wraparound relative vector from the ship to the closest asteroid. | `x` divided by half screen width, `y` divided by half screen height. |
+| `asteroid_velocity_x/y` | Movement direction of the closest asteroid. | Divided by the ship speed. |
+| `asteroid_in_front` | How aligned the closest asteroid is with the ship's current heading. | Dot-product signal in `[0, 1]`. |
+| `asteroid_time_to_collision` | Short-horizon collision-risk signal for the closest asteroid. | `0` for no near-term threat, up to `1` for more urgent threats. |
 
-Relative positions use wraparound distance, so the network sees the nearest direction across screen edges rather than being confused by objects near the opposite border.
+If no mineral is available, the mineral-related inputs are filled with zeros. This keeps the neural network input length stable.
 
 ## Outputs
 
@@ -45,8 +50,12 @@ fitness =
     minerals_collected * minerals_weight
   + alive_time * alive_time_weight
   + mineral_progress * mineral_progress_weight
+  + mineral_approach * mineral_approach_weight
+  + mineral_heading_alignment * mineral_heading_alignment_weight
   + fuel_efficiency * fuel_efficiency_weight
   - idle_time * idle_penalty
+  - mineral_retreat * mineral_retreat_penalty
+  - indecision * indecision_penalty
   - asteroid_collision_penalty_term
   - cumulative_steering * steering_penalty
   - asteroid_proximity * asteroid_proximity_penalty
@@ -64,13 +73,40 @@ The weights are loaded from the `[FitnessWeights]` section of `neat_config.txt`:
 
 | Parameter | Current value | What it configures | Justification |
 | --- | ---: | --- | --- |
-| `minerals` | `30.0` | Reward per collected mineral. | This is the main objective, so it should dominate the fitness. A miner that collects resources is better than one that only survives or moves smoothly. |
-| `alive_time` | `0.001` | Small reward per frame survived. | Survival matters because the ship needs time to reach minerals, but the value is deliberately small so the agent does not learn to avoid risk forever without mining. |
+| `minerals` | `35.5` | Reward per collected mineral. | This is the main objective, so it should dominate the fitness. A miner that collects resources is better than one that only survives or moves smoothly. |
+| `alive_time` | `0.0001` | Small reward per frame survived. | Survival matters because the ship needs time to reach minerals, but the value is deliberately small so the agent does not learn to avoid risk forever without mining. |
 | `mineral_progress` | `0.05` | Reward for reducing the best-known distance to the current closest mineral. | This gives partial credit before minerals are collected. It helps early generations learn movement toward goals even when they rarely reach and mine a mineral. |
+| `mineral_approach` | `0.05` | Reward for moving closer to the current target mineral on the current frame. | This gives dense moment-to-moment feedback, making it easier for NEAT to discover useful navigation before full mineral collection becomes common. |
+| `mineral_retreat_penalty` | `0.05` | Penalty for moving farther away from the current target mineral. | This separates bad movement from good movement instead of letting both collapse into one ambiguous approach value. It also keeps back-and-forth oscillation from becoming profitable. |
+| `mineral_heading_alignment` | `0.0001` | Reward for pointing toward the current target mineral. | Heading is useful as a weak shaping signal, but it stays small because pointing at a mineral is less important than actually moving toward and collecting it. |
 | `idle_penalty` | `0.0035` | Penalty per frame with no movement. | This discourages controllers that sit still to conserve fuel or avoid asteroids. It pushes exploration and active mining behavior. |
+| `indecision_penalty` | `0.01` | Penalty for no-op behavior, spinning while stationary, and long periods without mineral progress while far from a mineral. | This targets the observed behavior where ships hesitate, drift into unproductive loops, or look visually worse even when survival is decent. |
 | `fuel_efficiency` | `0.03` | Reward for collected minerals per fuel used. | This encourages efficient routes and avoids rewarding wasteful thrusting. It is smaller than the mining reward because efficiency should refine behavior, not replace mining. |
-| `asteroid_collision_penalty` | `0.000` | Penalty applied on collision, scaled by alive time. | This is currently disabled. The likely reason is that collisions already terminate the episode, so a separate penalty can make evolution overly conservative or punish otherwise good miners too harshly. |
+| `asteroid_collision_penalty` | `0.002` | Penalty applied on collision, scaled by alive time. | Collision already ends the episode, but a small explicit penalty helps distinguish a risky survivor from a cleaner survivor with similar mineral count. |
 | `steering_penalty` | `0.000` | Penalty for total steering magnitude. | This is currently disabled. Steering smoothness is less important than collecting minerals, and too much penalty can prevent useful course corrections. |
 | `asteroid_proximity_penalty` | `0.0015` | Penalty for moving within the asteroid proximity threshold. | This gently discourages risky paths near asteroids without making the miner afraid to navigate through cluttered areas. |
 
 The chosen weights make mineral collection the highest priority, use progress as a learning signal for incomplete attempts, and keep safety and efficiency as secondary shaping terms.
+
+## Diagnostic Overlay
+
+During best-genome visualization, the overlay now shows both behavior values and weighted fitness components:
+
+| Overlay value | Why it is included |
+| --- | --- |
+| `Alive`, `Minerals`, `Fuel`, `Fuel used` | Shows whether a genome is surviving, collecting, and spending fuel efficiently. |
+| `Near mineral`, `Near asteroid` | Helps explain whether the ship is actually navigating toward resources or merely surviving near danger. |
+| `Progress+`, `Approach+`, `Retreat-` | Separates useful mineral-seeking movement from movement that looks active but increases the target distance. |
+| `Idle`, `Indecision-`, `Steering` | Makes hesitation, stationary spinning, and excessive control noise visible during playback. |
+| `Ast danger-`, `Hit asteroid` | Shows whether asteroid avoidance is a real learned behavior or whether a genome is simply getting lucky. |
+| `Fit minerals`, `Fit approach`, `Fit retreat`, `Fit idle`, `Fit indecision`, `Fit asteroid` | Shows how the raw behavior values affect the final fitness score. |
+
+This makes sense because visual quality and fitness can disagree. A ship may look better in an early generation while receiving lower fitness because it collected fewer minerals, moved away from the target, idled too much, or survived by chance. Showing the raw values and the weighted fitness terms makes those disagreements debuggable instead of relying on visual impression alone.
+
+## Improvement Suggestions Added
+
+| Suggestion | Implementation | Justification |
+| --- | --- | --- |
+| Add a fitness diagnostic overlay. | `TrainingVisualizer.draw_stats` now displays raw counters, distances, penalties, and selected weighted fitness terms. | It explains why one genome scores better than another and helps tune weights based on evidence rather than visual guesswork. |
+| Reward progress toward minerals. | `mineral_approach` now accumulates positive frame-to-frame movement toward the current closest mineral, while `mineral_progress` still tracks best-distance improvement. | Dense progress reward gives early generations a learning signal before they reliably collect minerals. |
+| Penalize indecision. | `indecision` increases when the ship idles, spins while stationary, or spends too long far from minerals without making progress. | This discourages controllers that survive by doing little, jittering, or looping instead of actively mining. |

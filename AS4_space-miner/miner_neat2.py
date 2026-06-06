@@ -24,7 +24,6 @@ BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
 GENERATIONS = 10
-SENSOR_TARGET_COUNT = 2
 FAR_FROM_MINERAL_DISTANCE = 0.35
 
 DEFAULT_FITNESS_WEIGHTS = {
@@ -32,7 +31,7 @@ DEFAULT_FITNESS_WEIGHTS = {
     "alive_time": 0.01,
     "mineral_progress": 0.01,
     "mineral_approach": 0.05,
-    "mineral_retreat_penalty": 0.025,
+    "mineral_retreat_penalty": 0.05,
     "mineral_heading_alignment": 0.005,
     "idle_penalty": 0.0035,
     "indecision_penalty": 0.01,
@@ -216,57 +215,6 @@ def normalized_relative_vector(source, target):
     return dx / (WIDTH / 2), dy / (HEIGHT / 2)
 
 
-def nearest_objects(ship, objects, count):
-    return sorted(objects, key=lambda obj: distance_between(ship, obj))[:count]
-
-
-def mineral_sensor_values(ship, mineral, max_distance):
-    if mineral is None:
-        return [0, 0, 0, 0]
-
-    relative_x, relative_y = normalized_relative_vector(ship, mineral)
-    return [
-        distance_between(ship, mineral) / max_distance,
-        relative_angle_to(ship, mineral) / math.pi,
-        relative_x,
-        relative_y,
-    ]
-
-
-def asteroid_sensor_values(ship, asteroid, max_distance):
-    if asteroid is None:
-        return [0, 0, 0, 0, 0, 0, 0, 0]
-
-    relative_x, relative_y = normalized_relative_vector(ship, asteroid)
-    return [
-        distance_between(ship, asteroid) / max_distance,
-        relative_angle_to(ship, asteroid) / math.pi,
-        relative_x,
-        relative_y,
-        asteroid.speed_x / ship.speed,
-        asteroid.speed_y / ship.speed,
-        asteroid_in_front(ship, asteroid),
-        asteroid_time_to_collision_signal(ship, asteroid),
-    ]
-
-
-def build_neat_inputs(ship, minerals, asteroids, max_distance):
-    inputs = []
-
-    nearest_minerals = nearest_objects(ship, minerals, SENSOR_TARGET_COUNT)
-    for index in range(SENSOR_TARGET_COUNT):
-        mineral = nearest_minerals[index] if index < len(nearest_minerals) else None
-        inputs.extend(mineral_sensor_values(ship, mineral, max_distance))
-
-    nearest_asteroids = nearest_objects(ship, asteroids, SENSOR_TARGET_COUNT)
-    for index in range(SENSOR_TARGET_COUNT):
-        asteroid = nearest_asteroids[index] if index < len(nearest_asteroids) else None
-        inputs.extend(asteroid_sensor_values(ship, asteroid, max_distance))
-
-    inputs.append(ship.fuel / 100.0)
-    return inputs
-
-
 def asteroid_in_front(ship, asteroid):
     dx, dy = relative_position(ship, asteroid)
     distance = math.hypot(dx, dy)
@@ -343,8 +291,45 @@ def run_simulation(genome, config, visualizer=None):
             if closest_mineral else None
         )
 
+        mineral_distance = (
+            distance_between(ship, closest_mineral) / max_distance
+            if closest_mineral else 0
+        )
+        mineral_relative_angle = (
+            relative_angle_to(ship, closest_mineral) / math.pi
+            if closest_mineral else 0
+        )
+        asteroid_distance = (
+            distance_between(ship, closest_asteroid) / max_distance
+        )
+        asteroid_relative_angle = relative_angle_to(ship, closest_asteroid) / math.pi
+        mineral_relative_x, mineral_relative_y = (
+            normalized_relative_vector(ship, closest_mineral)
+            if closest_mineral else (0, 0)
+        )
+        asteroid_relative_x, asteroid_relative_y = normalized_relative_vector(
+            ship,
+            closest_asteroid
+        )
+        asteroid_velocity_x = closest_asteroid.speed_x / ship.speed
+        asteroid_velocity_y = closest_asteroid.speed_y / ship.speed
+
         # Get inputs (handle case where all minerals are collected)
-        inputs = build_neat_inputs(ship, minerals, asteroids, max_distance)
+        inputs = [
+            mineral_distance,
+            mineral_relative_angle,
+            asteroid_distance,
+            asteroid_relative_angle,
+            ship.fuel / 100.0,
+            mineral_relative_x,
+            mineral_relative_y,
+            asteroid_relative_x,
+            asteroid_relative_y,
+            asteroid_velocity_x,
+            asteroid_velocity_y,
+            asteroid_in_front(ship, closest_asteroid),
+            asteroid_time_to_collision_signal(ship, closest_asteroid)
+        ]
         
         # Get actions from network
         output = net.activate(inputs)

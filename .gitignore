@@ -188,3 +188,4 @@ cython_debug/
 *.csv
 
 AS4_space-miner/artifacts
+AS4_space-miner/nevo-papers
