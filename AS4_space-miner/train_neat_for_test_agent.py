@@ -14,15 +14,33 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 
 from miner_harness import Asteroid, Mineral, Spaceship
-
-
-WIDTH, HEIGHT = 800, 600
-MAX_DISTANCE = math.hypot(WIDTH, HEIGHT)
-MAX_FRAMES = 5000
-ASTEROID_DANGER_MARGIN = 20
-MINERAL_APPROACH_WEIGHT = 0.02
-MINERAL_PROGRESS_WEIGHT = 0.05
-FUEL_EFFICIENCY_WEIGHT = 25.0
+from train_neat_for_test_agent_config import (
+    ASTEROID_COLLISION_PENALTY,
+    ASTEROID_DANGER_MARGIN,
+    ASTEROID_DANGER_WEIGHT,
+    DEFAULT_GENERATIONS,
+    EXPECTED_INPUTS,
+    EXPECTED_OUTPUTS,
+    FUEL_EFFICIENCY_WEIGHT,
+    HEIGHT,
+    IDLE_PENALTY_WEIGHT,
+    INITIAL_ASTEROID_COUNT,
+    INITIAL_MINERAL_COUNT,
+    MAX_DISTANCE,
+    MAX_FRAMES,
+    MINE_THRESHOLD,
+    MINERAL_APPROACH_WEIGHT,
+    MINERAL_PROGRESS_WEIGHT,
+    MINERAL_REFILL_COUNT,
+    MINERAL_REFILL_THRESHOLD,
+    MINING_REFUEL_AMOUNT,
+    OUT_OF_FUEL_PENALTY,
+    REMAINING_FUEL_WEIGHT,
+    THRUST_THRESHOLD,
+    TIME_WASTED_WEIGHT,
+    TURN_RATE,
+    WIDTH,
+)
 
 
 def relative_position(source, target, width=WIDTH, height=HEIGHT):
@@ -165,8 +183,8 @@ def run_episode(genome, config):
     reset_fixed_harness_sequence()
 
     ship = Spaceship()
-    minerals = [Mineral() for _ in range(5)]
-    asteroids = [Asteroid() for _ in range(8)]
+    minerals = [Mineral() for _ in range(INITIAL_MINERAL_COUNT)]
+    asteroids = [Asteroid() for _ in range(INITIAL_ASTEROID_COUNT)]
 
     alive_time = 0
     death_reason = "time_limit"
@@ -216,8 +234,8 @@ def run_episode(genome, config):
 
         # Match test_agent.py exactly so the saved genome behaves the same
         # during final playback.
-        ship.angle += (output[0] * 2 - 1) * 0.1
-        if output[1] > 0.5:
+        ship.angle += (output[0] * 2 - 1) * TURN_RATE
+        if output[1] > THRUST_THRESHOLD:
             dx = ship.speed * math.cos(ship.angle)
             dy = ship.speed * math.sin(ship.angle)
             fuel_before_move = ship.fuel
@@ -241,7 +259,7 @@ def run_episode(genome, config):
                 mineral_progress += best_distance - target_distance_after
                 mineral_best_distances[closest_mineral] = target_distance_after
 
-        if output[2] > 0.5:
+        if output[2] > MINE_THRESHOLD:
             mine_attempts += 1
             old_mineral_count = ship.minerals
             old_fuel = ship.fuel
@@ -249,9 +267,9 @@ def run_episode(genome, config):
             if ship.minerals > old_mineral_count:
                 successful_mines += 1
                 if ship.fuel == old_fuel and ship.fuel < 100.0:
-                    ship.fuel = min(100.0, ship.fuel + 10.0)
-            if len(minerals) < 3:
-                minerals.extend(Mineral() for _ in range(2))
+                    ship.fuel = min(100.0, ship.fuel + MINING_REFUEL_AMOUNT)
+            if len(minerals) < MINERAL_REFILL_THRESHOLD:
+                minerals.extend(Mineral() for _ in range(MINERAL_REFILL_COUNT))
             mineral_best_distances = {
                 mineral: distance
                 for mineral, distance in mineral_best_distances.items()
@@ -317,15 +335,15 @@ def score_episode(
     fitness += mineral_progress * MINERAL_PROGRESS_WEIGHT
     fitness += mineral_approach * MINERAL_APPROACH_WEIGHT
     fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
-    fitness += ship.fuel * 0.2
-    fitness -= asteroid_danger * 3.0
-    fitness -= idle_time * 0.02
-    fitness -= wasted_mines * 0.03
+    fitness += ship.fuel * REMAINING_FUEL_WEIGHT
+    fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
+    fitness -= idle_time * IDLE_PENALTY_WEIGHT
+    fitness -= wasted_mines * TIME_WASTED_WEIGHT
 
     if death_reason == "asteroid_collision":
-        fitness -= 500
+        fitness -= ASTEROID_COLLISION_PENALTY
     elif death_reason == "out_of_fuel":
-        fitness -= 150
+        fitness -= OUT_OF_FUEL_PENALTY
 
     return fitness, {
         "fitness": fitness,
@@ -363,16 +381,6 @@ def eval_genomes(genomes, config):
     )
 
 
-def backup_existing_file(path):
-    if not os.path.exists(path):
-        return None
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_path = f"{path}.{timestamp}.bak"
-    shutil.copy2(path, backup_path)
-    return backup_path
-
-
 def train(config_path, output_path, generations):
     config = neat.Config(
         neat.DefaultGenome,
@@ -382,10 +390,14 @@ def train(config_path, output_path, generations):
         config_path,
     )
 
-    if config.genome_config.num_inputs != 13:
-        raise ValueError("test_agent.py expects a genome configured with 13 inputs")
-    if config.genome_config.num_outputs != 3:
-        raise ValueError("test_agent.py expects a genome configured with 3 outputs")
+    if config.genome_config.num_inputs != EXPECTED_INPUTS:
+        raise ValueError(
+            f"test_agent.py expects a genome configured with {EXPECTED_INPUTS} inputs"
+        )
+    if config.genome_config.num_outputs != EXPECTED_OUTPUTS:
+        raise ValueError(
+            f"test_agent.py expects a genome configured with {EXPECTED_OUTPUTS} outputs"
+        )
 
     population = neat.Population(config)
     population.add_reporter(neat.StdOutReporter(True))
@@ -393,13 +405,6 @@ def train(config_path, output_path, generations):
 
     winner = population.run(eval_genomes, generations)
 
-    backup_path = backup_existing_file(output_path)
-    with open(output_path, "wb") as f:
-        pickle.dump(winner, f)
-
-    if backup_path:
-        print(f"Backed up previous winner to: {backup_path}")
-    print(f"Saved winner genome to: {output_path}")
     return winner
 
 
@@ -424,7 +429,7 @@ def parse_args():
     parser.add_argument(
         "--generations",
         type=int,
-        default=10,
+        default=DEFAULT_GENERATIONS,
         help="Number of NEAT generations to run.",
     )
     return parser.parse_args()

@@ -4,7 +4,6 @@ import pygame
 import os
 import math
 import json
-import shutil
 from datetime import datetime
 
 # 🌟 1. 載入老師規定的固定測試環境 (期末考場)
@@ -99,7 +98,106 @@ def next_artifact_number(artifacts_dir):
     return max(numbers, default=0) + 1
 
 
-def save_test_artifacts(config_file, genome_path, results):
+def format_config_value(value):
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value)
+    return str(value)
+
+
+def section_lines(title, source, keys):
+    lines = [f"[{title}]"]
+    for key in keys:
+        if hasattr(source, key):
+            lines.append(f"{key:<34} = {format_config_value(getattr(source, key))}")
+    return lines
+
+
+def write_neat_config_artifact(config, path):
+    sections = [
+        section_lines(
+            "NEAT",
+            config,
+            [
+                "fitness_criterion",
+                "fitness_threshold",
+                "pop_size",
+                "reset_on_extinction",
+                "no_fitness_termination",
+            ],
+        ),
+        section_lines(
+            "DefaultGenome",
+            config.genome_config,
+            [
+                "num_inputs",
+                "num_hidden",
+                "num_outputs",
+                "initial_connection",
+                "feed_forward",
+                "compatibility_disjoint_coefficient",
+                "compatibility_weight_coefficient",
+                "conn_add_prob",
+                "conn_delete_prob",
+                "node_add_prob",
+                "node_delete_prob",
+                "single_structural_mutation",
+                "structural_mutation_surer",
+                "activation_default",
+                "activation_options",
+                "activation_mutate_rate",
+                "aggregation_default",
+                "aggregation_options",
+                "aggregation_mutate_rate",
+                "bias_init_mean",
+                "bias_init_stdev",
+                "bias_replace_rate",
+                "bias_mutate_rate",
+                "bias_mutate_power",
+                "bias_max_value",
+                "bias_min_value",
+                "response_init_mean",
+                "response_init_stdev",
+                "response_replace_rate",
+                "response_mutate_rate",
+                "response_mutate_power",
+                "response_max_value",
+                "response_min_value",
+                "weight_max_value",
+                "weight_min_value",
+                "weight_init_mean",
+                "weight_init_stdev",
+                "weight_mutate_rate",
+                "weight_replace_rate",
+                "weight_mutate_power",
+                "enabled_default",
+                "enabled_mutate_rate",
+            ],
+        ),
+        section_lines(
+            "DefaultSpeciesSet",
+            config.species_set_config,
+            ["compatibility_threshold"],
+        ),
+        section_lines(
+            "DefaultStagnation",
+            config.stagnation_config,
+            ["species_fitness_func", "max_stagnation", "species_elitism"],
+        ),
+        section_lines(
+            "DefaultReproduction",
+            config.reproduction_config,
+            ["elitism", "survival_threshold", "min_species_size"],
+        ),
+    ]
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n\n".join("\n".join(lines) for lines in sections))
+        f.write("\n")
+
+
+def save_test_artifacts(config_file, config, genome_path, results):
     local_dir = os.path.dirname(__file__)
     artifacts_dir = os.path.join(local_dir, "artifacts")
     test_number = next_artifact_number(artifacts_dir)
@@ -107,12 +205,13 @@ def save_test_artifacts(config_file, genome_path, results):
     os.makedirs(test_dir, exist_ok=False)
 
     config_artifact_path = os.path.join(test_dir, "configuration.txt")
-    shutil.copy2(config_file, config_artifact_path)
+    write_neat_config_artifact(config, config_artifact_path)
 
     artifact_data = {
         "test_number": test_number,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "config_file": os.path.abspath(config_file),
+        "config_artifact": os.path.abspath(config_artifact_path),
         "genome_path": os.path.abspath(genome_path),
         "results": results,
     }
@@ -320,7 +419,7 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
         "death_reason": death_reason,
         "fuel_remaining": ship.fuel,
     }
-    artifact_path = save_test_artifacts(config_file, genome_path, results)
+    artifact_path = save_test_artifacts(config_file, config, genome_path, results)
     print(f"Saved test artifacts to: {artifact_path}")
 
     pygame.quit()
