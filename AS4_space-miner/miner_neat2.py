@@ -311,8 +311,12 @@ def run_simulation(genome, config, visualizer=None):
             ship,
             closest_asteroid
         )
-        asteroid_velocity_x = closest_asteroid.speed_x / ship.speed
-        asteroid_velocity_y = closest_asteroid.speed_y / ship.speed
+        asteroid_relative_velocity_x = (
+            closest_asteroid.speed_x - ship.velocity_x
+        ) / ship.speed
+        asteroid_relative_velocity_y = (
+            closest_asteroid.speed_y - ship.velocity_y
+        ) / ship.speed
 
         # Get inputs (handle case where all minerals are collected)
         inputs = [
@@ -325,8 +329,8 @@ def run_simulation(genome, config, visualizer=None):
             mineral_relative_y,
             asteroid_relative_x,
             asteroid_relative_y,
-            asteroid_velocity_x,
-            asteroid_velocity_y,
+            asteroid_relative_velocity_x,
+            asteroid_relative_velocity_y,
             asteroid_in_front(ship, closest_asteroid),
             asteroid_time_to_collision_signal(ship, closest_asteroid)
         ]

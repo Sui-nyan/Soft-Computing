@@ -23,7 +23,7 @@ The miner receives a compact state vector built from the closest mineral, the cl
 | `fuel` | Remaining ship fuel. | Divided by 100. |
 | `mineral_relative_x/y` | Wraparound relative vector from the ship to the closest mineral. | `x` divided by half screen width, `y` divided by half screen height. |
 | `asteroid_relative_x/y` | Wraparound relative vector from the ship to the closest asteroid. | `x` divided by half screen width, `y` divided by half screen height. |
-| `asteroid_velocity_x/y` | Movement direction of the closest asteroid. | Divided by the ship speed. |
+| `asteroid_relative_velocity_x/y` | Velocity of the closest asteroid relative to the ship, so the network can infer closing motion. | Divided by the ship speed. |
 | `asteroid_in_front` | How aligned the closest asteroid is with the ship's current heading. | Dot-product signal in `[0, 1]`. |
 | `asteroid_time_to_collision` | Short-horizon collision-risk signal for the closest asteroid. | `0` for no near-term threat, up to `1` for more urgent threats. |
 
