@@ -13,6 +13,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 from miner_harness import Spaceship
 from miner_neat2 import Asteroid, Mineral
 from train_neat_for_test_agent_config import (
+    ASTEROID_COLLISION_EARLY_DEATH_WEIGHT,
     ASTEROID_COLLISION_PENALTY,
     ASTEROID_DANGER_MARGIN,
     ASTEROID_DANGER_WEIGHT,
@@ -36,13 +37,14 @@ from train_neat_for_test_agent_config import (
     MINING_REFUEL_AMOUNT,
     OUT_OF_FUEL_PENALTY,
     REMAINING_FUEL_WEIGHT,
+    TEST_SCORE_WEIGHT,
     THRUST_THRESHOLD,
     WASTED_MINES_WEIGHT,
     TURN_RATE,
     WIDTH,
 )
 
-AUTO_STOP_PATIENCE = 10
+AUTO_STOP_PATIENCE = 50
 
 
 def relative_position(source, target, width=WIDTH, height=HEIGHT):
@@ -372,25 +374,30 @@ def score_episode(
     fuel_efficiency = ship.minerals / max(effective_fuel_used, 1)
     wasted_mines = max(0, mine_attempts - successful_mines)
 
-    fitness = test_score
+    fitness = test_score * TEST_SCORE_WEIGHT
     fitness += mineral_progress * MINERAL_PROGRESS_WEIGHT
     fitness += mineral_approach * MINERAL_APPROACH_WEIGHT
     fitness += mineral_alignment * MINERAL_ALIGNMENT_WEIGHT
     fitness += mineral_velocity * MINERAL_VELOCITY_WEIGHT
-    fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
+    # fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
     # fitness += ship.fuel * REMAINING_FUEL_WEIGHT
     fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
     # fitness -= idle_time * IDLE_PENALTY_WEIGHT
-    # fitness -= wasted_mines * WASTED_MINES_WEIGHT
+    fitness -= wasted_mines * WASTED_MINES_WEIGHT
 
     if death_reason == "asteroid_collision":
         fitness -= ASTEROID_COLLISION_PENALTY
+        fitness -= (
+            max(0, MAX_FRAMES + 1 - alive_time)
+            * ASTEROID_COLLISION_EARLY_DEATH_WEIGHT
+        )
     # elif death_reason == "out_of_fuel":
     #    fitness -= OUT_OF_FUEL_PENALTY
 
     return fitness, {
         "fitness": fitness,
         "test_score": test_score,
+        "weighted_test_score": test_score * TEST_SCORE_WEIGHT,
         "alive_time": alive_time,
         "minerals": ship.minerals,
         "fuel": ship.fuel,
@@ -429,40 +436,69 @@ def eval_genomes(genomes, config):
 
 
 class FitnessPlateauStop(Exception):
-    def __init__(self, best_genome, best_fitness, patience):
+    def __init__(self, best_genome, best_fitness, best_score, patience):
         super().__init__(
-            f"Fitness did not improve for {patience} consecutive generations"
+            f"Test score did not improve for {patience} consecutive generations"
         )
         self.best_genome = best_genome
         self.best_fitness = best_fitness
+        self.best_score = best_score
         self.patience = patience
 
 
 class FitnessPlateauReporter(neat.reporting.BaseReporter):
     def __init__(self, patience):
         self.patience = patience
+        self.best_score = -float("inf")
         self.best_fitness = -float("inf")
         self.best_genome = None
         self.generations_without_improvement = 0
 
     def post_evaluate(self, config, population, species, best_genome):
-        current_fitness = best_genome.fitness
-        if current_fitness > self.best_fitness:
+        generation_best = max(
+            population.values(),
+            key=lambda genome: (
+                genome.metrics.get("test_score", -float("inf")),
+                genome.fitness,
+            ),
+        )
+        current_score = generation_best.metrics["test_score"]
+        current_fitness = generation_best.fitness
+
+        if (
+            current_score > self.best_score
+            or (
+                current_score == self.best_score
+                and current_fitness > self.best_fitness
+            )
+        ):
+            self.best_score = current_score
             self.best_fitness = current_fitness
-            self.best_genome = copy.deepcopy(best_genome)
+            self.best_genome = copy.deepcopy(generation_best)
             self.generations_without_improvement = 0
+            print(
+                "New best test score: "
+                f"score={self.best_score:.2f} "
+                f"fitness={self.best_fitness:.2f}"
+            )
             return
 
         self.generations_without_improvement += 1
-        print(
-            "No fitness improvement: "
-            f"{self.generations_without_improvement}/{self.patience} generations"
-        )
+        if self.patience:
+            print(
+                "No test-score improvement: "
+                f"{self.generations_without_improvement}/{self.patience} "
+                "generations"
+            )
 
-        if self.generations_without_improvement >= self.patience:
+        if (
+            self.patience
+            and self.generations_without_improvement >= self.patience
+        ):
             raise FitnessPlateauStop(
                 self.best_genome,
                 self.best_fitness,
+                self.best_score,
                 self.patience,
             )
 
@@ -488,24 +524,35 @@ def train(config_path, output_path, generations, auto_stop_patience=AUTO_STOP_PA
     population = neat.Population(config)
     population.add_reporter(neat.StdOutReporter(True))
     population.add_reporter(neat.StatisticsReporter())
-    if auto_stop_patience > 0:
-        population.add_reporter(FitnessPlateauReporter(auto_stop_patience))
+    score_reporter = FitnessPlateauReporter(
+        auto_stop_patience if auto_stop_patience > 0 else None
+    )
+    population.add_reporter(score_reporter)
 
     try:
-        winner = population.run(eval_genomes, generations)
+        population.run(eval_genomes, generations)
     except FitnessPlateauStop as stop:
-        winner = stop.best_genome
         print(
             "Auto-stopped training: "
-            f"fitness did not improve for {stop.patience} generations. "
-            f"Best fitness: {stop.best_fitness:.2f}"
+            f"test score did not improve for {stop.patience} generations. "
+            f"Best score: {stop.best_score:.2f}; "
+            f"best fitness: {stop.best_fitness:.2f}"
         )
+
+    winner = score_reporter.best_genome
+    if winner is None:
+        raise RuntimeError("Training finished before any genome was evaluated.")
 
     output_path = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "wb") as f:
         pickle.dump(winner, f)
-    print(f"Saved winner to: {output_path}")
+    print(
+        "Saved best test-score genome to: "
+        f"{output_path} "
+        f"(score={score_reporter.best_score:.2f}, "
+        f"fitness={score_reporter.best_fitness:.2f})"
+    )
 
     return winner
 
