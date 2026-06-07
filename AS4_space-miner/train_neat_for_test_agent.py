@@ -2,8 +2,6 @@ import argparse
 import math
 import os
 import pickle
-import shutil
-from datetime import datetime
 import neat
 import pygame
 

@@ -4,6 +4,11 @@ channels:
 dependencies:
   - python=3.11
   - pip
+  - jupyter
+  - pandas
+  - matplotlib
+  - seaborn
+  - scikit-learn
   - pygame>=2.5
   - pip:
       - neat-python==0.92
