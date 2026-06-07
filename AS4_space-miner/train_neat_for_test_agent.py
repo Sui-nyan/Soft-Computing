@@ -1,4 +1,5 @@
 import argparse
+import copy
 import math
 import os
 import pickle
@@ -39,6 +40,8 @@ from train_neat_for_test_agent_config import (
     TURN_RATE,
     WIDTH,
 )
+
+AUTO_STOP_PATIENCE = 10
 
 
 def relative_position(source, target, width=WIDTH, height=HEIGHT):
@@ -424,7 +427,46 @@ def eval_genomes(genomes, config):
     )
 
 
-def train(config_path, output_path, generations):
+class FitnessPlateauStop(Exception):
+    def __init__(self, best_genome, best_fitness, patience):
+        super().__init__(
+            f"Fitness did not improve for {patience} consecutive generations"
+        )
+        self.best_genome = best_genome
+        self.best_fitness = best_fitness
+        self.patience = patience
+
+
+class FitnessPlateauReporter(neat.reporting.BaseReporter):
+    def __init__(self, patience):
+        self.patience = patience
+        self.best_fitness = -float("inf")
+        self.best_genome = None
+        self.generations_without_improvement = 0
+
+    def post_evaluate(self, config, population, species, best_genome):
+        current_fitness = best_genome.fitness
+        if current_fitness > self.best_fitness:
+            self.best_fitness = current_fitness
+            self.best_genome = copy.deepcopy(best_genome)
+            self.generations_without_improvement = 0
+            return
+
+        self.generations_without_improvement += 1
+        print(
+            "No fitness improvement: "
+            f"{self.generations_without_improvement}/{self.patience} generations"
+        )
+
+        if self.generations_without_improvement >= self.patience:
+            raise FitnessPlateauStop(
+                self.best_genome,
+                self.best_fitness,
+                self.patience,
+            )
+
+
+def train(config_path, output_path, generations, auto_stop_patience=AUTO_STOP_PATIENCE):
     config = neat.Config(
         neat.DefaultGenome,
         neat.DefaultReproduction,
@@ -445,8 +487,18 @@ def train(config_path, output_path, generations):
     population = neat.Population(config)
     population.add_reporter(neat.StdOutReporter(True))
     population.add_reporter(neat.StatisticsReporter())
+    if auto_stop_patience > 0:
+        population.add_reporter(FitnessPlateauReporter(auto_stop_patience))
 
-    winner = population.run(eval_genomes, generations)
+    try:
+        winner = population.run(eval_genomes, generations)
+    except FitnessPlateauStop as stop:
+        winner = stop.best_genome
+        print(
+            "Auto-stopped training: "
+            f"fitness did not improve for {stop.patience} generations. "
+            f"Best fitness: {stop.best_fitness:.2f}"
+        )
 
     output_path = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -481,9 +533,18 @@ def parse_args():
         default=DEFAULT_GENERATIONS,
         help="Number of NEAT generations to run.",
     )
+    parser.add_argument(
+        "--auto-stop-patience",
+        type=int,
+        default=AUTO_STOP_PATIENCE,
+        help=(
+            "Stop training when fitness does not improve for this many "
+            "generations. Use 0 to disable."
+        ),
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    train(args.config, args.output, args.generations)
+    train(args.config, args.output, args.generations, args.auto_stop_patience)
