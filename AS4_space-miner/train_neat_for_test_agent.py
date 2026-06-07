@@ -9,8 +9,6 @@ import pygame
 # that module creates a pygame display at import time.
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-
-
 from miner_harness import Asteroid, Mineral, Spaceship
 from train_neat_for_test_agent_config import (
     ASTEROID_COLLISION_PENALTY,
@@ -37,7 +35,7 @@ from train_neat_for_test_agent_config import (
     OUT_OF_FUEL_PENALTY,
     REMAINING_FUEL_WEIGHT,
     THRUST_THRESHOLD,
-    TIME_WASTED_WEIGHT,
+    WASTED_MINES_WEIGHT,
     TURN_RATE,
     WIDTH,
 )
@@ -200,6 +198,7 @@ def run_episode(genome, config):
     mineral_velocity = 0
     mineral_best_distances = {}
     fuel_used = 0
+    asteroid_avoidance_fuel = 0
     asteroid_danger = 0
     idle_time = 0
     mine_attempts = 0
@@ -219,6 +218,7 @@ def run_episode(genome, config):
                     mineral_alignment,
                     mineral_velocity,
                     fuel_used,
+                    asteroid_avoidance_fuel,
                     asteroid_danger,
                     idle_time,
                     mine_attempts,
@@ -235,6 +235,15 @@ def run_episode(genome, config):
         target_distance_before = (
             distance_between(ship, closest_mineral) if closest_mineral else None
         )
+        asteroid_threat_before = False
+        if closest_asteroid:
+            asteroid_clearance_before = (
+                distance_between(ship, closest_asteroid)
+                - ship.radius
+                - closest_asteroid.radius
+            )
+            asteroid_threat_before = asteroid_clearance_before < ASTEROID_DANGER_MARGIN
+
         if closest_mineral and closest_mineral not in mineral_best_distances:
             mineral_best_distances[closest_mineral] = target_distance_before
 
@@ -248,7 +257,10 @@ def run_episode(genome, config):
             dy = ship.speed * math.sin(ship.angle)
             fuel_before_move = ship.fuel
             ship.move(dx, dy)
-            fuel_used += max(0, fuel_before_move - ship.fuel)
+            fuel_delta = max(0, fuel_before_move - ship.fuel)
+            fuel_used += fuel_delta
+            if asteroid_threat_before:
+                asteroid_avoidance_fuel += fuel_delta
             ship_velocity_x = dx
             ship_velocity_y = dy
         else:
@@ -328,6 +340,7 @@ def run_episode(genome, config):
         mineral_alignment,
         mineral_velocity,
         fuel_used,
+        asteroid_avoidance_fuel,
         asteroid_danger,
         idle_time,
         mine_attempts,
@@ -344,13 +357,15 @@ def score_episode(
     mineral_alignment,
     mineral_velocity,
     fuel_used,
+    asteroid_avoidance_fuel,
     asteroid_danger,
     idle_time,
     mine_attempts,
     successful_mines,
 ):
     test_score = (alive_time / 4) + (ship.minerals * 100)
-    fuel_efficiency = ship.minerals / max(fuel_used, 1)
+    effective_fuel_used = fuel_used + asteroid_avoidance_fuel
+    fuel_efficiency = ship.minerals / max(effective_fuel_used, 1)
     wasted_mines = max(0, mine_attempts - successful_mines)
 
     fitness = test_score
@@ -362,7 +377,7 @@ def score_episode(
     fitness += ship.fuel * REMAINING_FUEL_WEIGHT
     fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
     fitness -= idle_time * IDLE_PENALTY_WEIGHT
-    fitness -= wasted_mines * TIME_WASTED_WEIGHT
+    fitness -= wasted_mines * WASTED_MINES_WEIGHT
 
     if death_reason == "asteroid_collision":
         fitness -= ASTEROID_COLLISION_PENALTY
@@ -376,6 +391,8 @@ def score_episode(
         "minerals": ship.minerals,
         "fuel": ship.fuel,
         "fuel_used": fuel_used,
+        "asteroid_avoidance_fuel": asteroid_avoidance_fuel,
+        "effective_fuel_used": effective_fuel_used,
         "fuel_efficiency": fuel_efficiency,
         "mineral_approach": mineral_approach,
         "mineral_progress": mineral_progress,

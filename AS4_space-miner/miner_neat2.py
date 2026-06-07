@@ -65,15 +65,8 @@ def distance_between(source, target):
     return math.hypot(dx, dy)
 
 
-def load_fitness_weights(config_file):
-    parser = configparser.ConfigParser()
-    parser.read(config_file)
-
+def load_fitness_weights():
     weights = DEFAULT_FITNESS_WEIGHTS.copy()
-    if parser.has_section("FitnessWeights"):
-        for weight_name in weights:
-            if parser.has_option("FitnessWeights", weight_name):
-                weights[weight_name] = parser.getfloat("FitnessWeights", weight_name)
 
     return weights
 
@@ -581,7 +574,7 @@ def run_neat(config_file):
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
                         config_file)
-    config.fitness_weights = load_fitness_weights(config_file)
+    config.fitness_weights = DEFAULT_FITNESS_WEIGHTS
     config.visualizer = TrainingVisualizer()
     
     # Create population
