@@ -10,7 +10,8 @@ import pygame
 # that module creates a pygame display at import time.
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-from miner_harness import Asteroid, Mineral, Spaceship
+from miner_harness import Spaceship
+from miner_neat2 import Asteroid, Mineral
 from train_neat_for_test_agent_config import (
     ASTEROID_COLLISION_PENALTY,
     ASTEROID_DANGER_MARGIN,
@@ -382,8 +383,8 @@ def score_episode(
     # fitness -= idle_time * IDLE_PENALTY_WEIGHT
     # fitness -= wasted_mines * WASTED_MINES_WEIGHT
 
-    # if death_reason == "asteroid_collision":
-    #     fitness -= ASTEROID_COLLISION_PENALTY
+    if death_reason == "asteroid_collision":
+        fitness -= ASTEROID_COLLISION_PENALTY
     # elif death_reason == "out_of_fuel":
     #     fitness -= OUT_OF_FUEL_PENALTY
 
