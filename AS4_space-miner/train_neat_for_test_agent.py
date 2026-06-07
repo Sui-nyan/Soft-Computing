@@ -369,20 +369,20 @@ def score_episode(
     wasted_mines = max(0, mine_attempts - successful_mines)
 
     fitness = test_score
-    fitness += mineral_progress * MINERAL_PROGRESS_WEIGHT
-    fitness += mineral_approach * MINERAL_APPROACH_WEIGHT
-    fitness += mineral_alignment * MINERAL_ALIGNMENT_WEIGHT
-    fitness += mineral_velocity * MINERAL_VELOCITY_WEIGHT
-    fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
-    fitness += ship.fuel * REMAINING_FUEL_WEIGHT
+    # fitness += mineral_progress * MINERAL_PROGRESS_WEIGHT
+    # fitness += mineral_approach * MINERAL_APPROACH_WEIGHT
+    # fitness += mineral_alignment * MINERAL_ALIGNMENT_WEIGHT
+    # fitness += mineral_velocity * MINERAL_VELOCITY_WEIGHT
+    # fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
+    # fitness += ship.fuel * REMAINING_FUEL_WEIGHT
     fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
-    fitness -= idle_time * IDLE_PENALTY_WEIGHT
-    fitness -= wasted_mines * WASTED_MINES_WEIGHT
+    # fitness -= idle_time * IDLE_PENALTY_WEIGHT
+    # fitness -= wasted_mines * WASTED_MINES_WEIGHT
 
-    if death_reason == "asteroid_collision":
-        fitness -= ASTEROID_COLLISION_PENALTY
-    elif death_reason == "out_of_fuel":
-        fitness -= OUT_OF_FUEL_PENALTY
+    # if death_reason == "asteroid_collision":
+    #     fitness -= ASTEROID_COLLISION_PENALTY
+    # elif death_reason == "out_of_fuel":
+    #     fitness -= OUT_OF_FUEL_PENALTY
 
     return fitness, {
         "fitness": fitness,
