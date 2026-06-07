@@ -367,6 +367,7 @@ def save_test_artifacts(
     config_file,
     config,
     genome_path,
+    winner,
     results,
     winner_summary=None,
     behavior_summary=None,
@@ -387,6 +388,9 @@ def save_test_artifacts(
         "config_file": os.path.abspath(config_file),
         "config_artifact": os.path.abspath(config_artifact_path),
         "genome_path": os.path.abspath(genome_path),
+        "runnable_genome_artifact": os.path.abspath(
+            os.path.join(test_dir, f"test_{test_number}.pkl")
+        ),
         "config_values": parse_config_file(config_file),
         "training_constants": collect_training_constants(),
         "winner_summary": winner_summary or {},
@@ -400,7 +404,7 @@ def save_test_artifacts(
 
     pickle_artifact_path = os.path.join(test_dir, f"test_{test_number}.pkl")
     with open(pickle_artifact_path, "wb") as f:
-        pickle.dump(artifact_data, f)
+        pickle.dump(winner, f)
 
     return test_dir
 
@@ -435,6 +439,7 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
     asteroids = [Asteroid() for _ in range(8)]
     
     alive_time = 0
+    max_alive_time = 5000
     running = True
     death_reason = "window_closed"
     ship_velocity_x = 0
@@ -579,8 +584,12 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
         
         # 在畫面上顯示即時資訊
         font = pygame.font.SysFont(None, 36)
+        time_left = max(0, max_alive_time - alive_time)
+        current_score = (alive_time / 4) + (ship.minerals * 100)
         screen.blit(font.render(f"Minerals: {ship.minerals}", True, (255, 255, 255)), (10, 10))
         screen.blit(font.render(f"Fuel: {ship.fuel:.1f}", True, (255, 255, 255)), (10, 50))
+        screen.blit(font.render(f"Time left: {time_left}", True, (255, 255, 255)), (10, 90))
+        screen.blit(font.render(f"Score: {current_score:.2f}", True, (255, 255, 255)), (10, 130))
         
         pygame.display.flip()
         clock.tick(30) # 控制在 30 FPS，方便錄影
@@ -610,12 +619,12 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
             running = False
             death_reason = "out_of_fuel"
             print("⛽ 死因：燃料耗盡！")
-        elif alive_time > 5000:
+        elif alive_time > max_alive_time:
             running = False
             death_reason = "time_limit"
             print("⏱️ 死因：時間到！")
         
-        if asteroid_collision or out_of_fuel or alive_time > 5000:
+        if asteroid_collision or out_of_fuel or alive_time > max_alive_time:
             running = False
             print("💥 飛船損毀或燃料耗盡，遊戲結束！")
 
@@ -638,6 +647,7 @@ def test_best_agent(config_file, genome_path="winner.pkl"):
         config_file,
         config,
         genome_path,
+        winner,
         results,
         winner_summary=summarize_winner_genome(winner),
         behavior_summary=summarize_behavior_tracker(behavior_tracker),
