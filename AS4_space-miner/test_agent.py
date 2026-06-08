@@ -8,9 +8,9 @@ import configparser
 from datetime import datetime
 
 # 🌟 1. 載入老師規定的固定測試環境 (期末考場)
-from miner_harness import Spaceship
+from miner_harness import Spaceship,  Mineral, Asteroid 
 # from miner_harness import Spaceship, Mineral, Asteroid 
-from miner_neat2 import Mineral, Asteroid 
+# from miner_neat2 import Mineral, Asteroid 
 
 try:
     import train_neat_for_test_agent_config as training_constants

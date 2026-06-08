@@ -1,136 +1,116 @@
-# Report: Reward and Penalty Design in `train_neat_for_test_agent.py`
+# Report: Fitness Design Experiment for Space Miner
 
 ## Overview
 
-`train_neat_for_test_agent.py` trains a NEAT neural-network agent for the Space Miner game. The agent controls a spaceship that must survive, collect minerals, manage fuel, and avoid moving asteroids. Each genome is evaluated by running one fixed episode and assigning it a fitness score. This fitness score is the main learning signal: rewards increase fitness for useful behavior, while penalties reduce fitness for dangerous or wasteful behavior.
+This experiment trained a NEAT neural-network agent to play the Space Miner game. The agent controls a ship that must collect minerals, avoid asteroids, manage fuel, and survive as long as possible. The main training file is `train_neat_for_test_agent.py`, with experiment constants defined in `train_neat_for_test_agent_config.py`.
 
-The episode ends when the ship collides with an asteroid, runs out of fuel, or reaches the frame limit. The final fitness is computed in `score_episode()`.
+The goal of the experiment was not only to produce a working agent, but also to understand how different fitness-function designs affect learning. Several reward and penalty terms were tested, including mineral rewards, mineral progress rewards, fuel rewards, asteroid danger penalties, idle penalties, wasted mining penalties, and collision penalties.
 
-## Base Reward
+The most important result was that the highest scoring agent came from a relatively simple fitness function. Adding more detailed rewards and penalties helped explain behavior, but after a certain point it made the training result worse.
 
-The script begins with a base test score:
+## Training Setup
+
+The agent is evolved with NEAT. Each genome becomes a feed-forward neural network that receives the game state and outputs actions for the ship. The ship can turn, thrust, and mine. During evaluation, each genome plays one episode of Space Miner, and the resulting episode statistics are converted into a fitness score.
+
+The base score used in the experiment is:
 
 ```python
 test_score = (alive_time / 4) + (ship.minerals * 100)
 ```
 
-This gives the agent two primary objectives:
+This score directly rewards the two most important objectives:
 
-- Survive longer: every frame alive adds `0.25` fitness points.
-- Collect minerals: each mined mineral adds `100` fitness points.
+- staying alive
+- collecting minerals
 
-This base score strongly favors agents that can stay alive while collecting resources. Mineral collection is weighted much more heavily than simple survival, so the agent is encouraged to actively play the game instead of only avoiding danger.
+Mineral collection is weighted much more strongly than survival. This is important because an agent that only survives without mining is not actually solving the task.
 
-## Mineral-Seeking Rewards
+## Final Fitness Function
 
-The script adds two shaping rewards to help the agent learn how to reach minerals before it reliably mines them.
-
-### Mineral Progress Reward
+The best-performing version kept the fitness function simple:
 
 ```python
+fitness = test_score * TEST_SCORE_WEIGHT
 fitness += mineral_progress * MINERAL_PROGRESS_WEIGHT
-```
-
-`MINERAL_PROGRESS_WEIGHT` is `0.05`. The variable `mineral_progress` increases when the ship reaches a new closest distance to the current target mineral. This rewards long-term improvement toward a mineral, even if the agent does not mine it during that episode.
-
-This is useful because mining is a sparse reward: the agent only receives the large mineral reward after physically reaching and mining a mineral. Without progress shaping, early generations might receive little guidance about which movements are useful.
-
-### Mineral Approach Reward
-
-```python
 fitness += mineral_approach * MINERAL_APPROACH_WEIGHT
+fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
 ```
 
-`MINERAL_APPROACH_WEIGHT` is `0.02`. `mineral_approach` increases whenever the ship moves closer to the nearest mineral during a frame.
+This means the active fitness function used four main ideas:
 
-This gives the agent a smaller, immediate reward for moving in the right direction. Together, mineral progress and mineral approach encourage navigation behavior such as turning toward minerals, thrusting when aligned, and continuing to close distance.
+- reward the real game score
+- reward long-term progress toward minerals
+- reward frame-by-frame movement toward minerals
+- penalize dangerous closeness to asteroids
 
-## Fuel Rewards
+Other possible terms were implemented or tested, but were disabled in the final version:
 
-The agent receives two fuel-related rewards.
+- mineral heading alignment
+- mineral velocity alignment
+- fuel efficiency reward
+- remaining fuel reward
+- idle penalty
+- wasted mining penalty
+- explicit asteroid collision penalty
+- out-of-fuel penalty
 
-### Fuel Efficiency Reward
+These terms seemed reasonable individually, but combining too many of them made the optimization problem harder for NEAT.
 
-```python
-fuel_efficiency = ship.minerals / max(fuel_used, 1)
-fitness += fuel_efficiency * FUEL_EFFICIENCY_WEIGHT
-```
+## Observation 1: Same Configuration Can Train Differently
 
-`FUEL_EFFICIENCY_WEIGHT` is `25.0`. This rewards collecting minerals while using less fuel. Since moving consumes fuel, the agent is encouraged to take shorter or more direct paths instead of drifting aimlessly.
+One important observation was that training runs were not perfectly repeatable, even when the same configuration was used. This is expected for NEAT because evolution depends on random initialization, mutation, crossover, species formation, and the order in which good structures are discovered.
 
-### Remaining Fuel Reward
+As a result, two runs with the same parameters can produce different agents. One run might quickly discover a useful mineral-seeking behavior, while another run might get stuck in a weaker strategy such as drifting, turning inefficiently, or surviving without collecting many minerals.
 
-```python
-fitness += ship.fuel * 0.2
-```
+Because of this, a single training run is not enough to judge whether a fitness design is good. The score trend, best genome behavior, and repeated runs all need to be considered. A configuration that occasionally produces a good agent is less reliable than one that consistently guides the population toward useful behavior.
 
-The agent also receives a small reward for ending the episode with fuel remaining. At full fuel, this can add up to `20` points. This reinforces careful movement and makes fuel conservation valuable even when the agent has not collected many minerals.
+## Observation 2: More Rewards and Penalties Can Make Performance Worse
 
-Mining also restores fuel in the harness, so successful mining indirectly helps survival and future movement.
+At first, it seemed natural to add more rewards and penalties for every behavior we wanted:
 
-## Asteroid Avoidance Penalties
+- reward fuel efficiency
+- reward remaining fuel
+- reward alignment with minerals
+- penalize idling
+- penalize wasted mining
+- penalize asteroid collisions
+- penalize running out of fuel
 
-The script penalizes both asteroid danger and actual collision.
+However, adding more shaping terms did not always improve performance. At a certain point, the agent started optimizing the shaping terms instead of the real task. For example, strong fuel rewards can make the agent too conservative, while idle or wasted-action penalties can discourage exploration during early learning. Collision and danger penalties can also make the agent overly cautious in a crowded map.
 
-### Asteroid Danger Penalty
+This made the fitness landscape noisier. Instead of receiving a clear signal that minerals are the main goal, the agent had to balance many smaller signals that sometimes conflicted with each other. The result was lower performance, even though the fitness function looked more complete.
 
-```python
-fitness -= asteroid_danger * 3.0
-```
+## Observation 3: A Simple Fitness Function Scored Highest
 
-`asteroid_danger` increases when the ship comes within `ASTEROID_DANGER_MARGIN`, which is `20` pixels beyond the combined ship and asteroid radii. The closer the ship gets inside this danger margin, the larger the accumulated penalty.
+The highest scoring setup was the simpler fitness function. It focused on the real objective, then added only enough shaping to help the agent reach minerals and avoid obvious asteroid danger.
 
-This penalty teaches the agent to avoid near misses, not only actual collisions. That is important because collision alone is a delayed and severe signal; the danger penalty gives earlier feedback that a trajectory is risky.
+This worked better because the learning signal was easier to interpret:
 
-### Asteroid Collision Penalty
+- collecting minerals gives a large reward
+- surviving gives useful but smaller reward
+- moving toward minerals gives partial credit before mining succeeds
+- getting too close to asteroids is discouraged
 
-```python
-if death_reason == "asteroid_collision":
-    fitness -= 500
-```
+The simple function did not try to describe every possible good behavior. Instead, it rewarded the outcome that mattered and used only a few supporting terms. This made it easier for NEAT to discover agents that actually play the game well.
 
-If the ship crashes into an asteroid, the agent loses `500` fitness points. This is the largest explicit penalty in the script. It strongly discourages reckless paths and makes survival around asteroids a core part of the learned strategy.
+## Observation 4: Weight Adjustment Helps Set Starting Behavior
 
-## Fuel Failure Penalty
+Although the final fitness function was simple, adjusting weights was still useful. The weights changed the early behavior that the agent learned first.
 
-```python
-elif death_reason == "out_of_fuel":
-    fitness -= 150
-```
+For example, increasing mineral approach or mineral progress made early agents more likely to move toward minerals, even before they learned to mine reliably. Increasing asteroid danger penalties made the agents more cautious around asteroids. Increasing survival or fuel-related rewards made agents more conservative.
 
-Running out of fuel subtracts `150` points. This is less severe than an asteroid collision, but still significant. The smaller size makes sense because fuel loss is often a strategic failure rather than an immediate navigation disaster. The agent should avoid wasting fuel, but the task still prioritizes asteroid safety and mineral collection.
+This shows that weights are useful for shaping the starting direction of learning. They can help the population avoid completely random or passive behavior in early generations. However, if the weights become too strong or too numerous, they can pull the agent away from the main objective.
 
-## Idle and Wasted Action Penalties
+## Discussion
 
-The script also penalizes unproductive behavior.
+The experiment showed that fitness design is a balance between guidance and over-control. A sparse reward such as mineral collection can be too difficult at the start, because early agents may rarely collect minerals. Some shaping is helpful because it gives partial credit for moving in the right direction.
 
-### Idle Penalty
+However, too much shaping can become harmful. When many rewards and penalties are active at the same time, the agent may learn behavior that satisfies the fitness formula without achieving the real goal. This is especially important in neuroevolution, where the algorithm does not understand the task directly. It only follows the numeric fitness value.
 
-```python
-fitness -= idle_time * 0.02
-```
+The best approach was to keep the main objective dominant and add only a small number of shaping terms that directly support it.
 
-`idle_time` increases whenever the agent chooses not to thrust. This penalty is small, but it discourages the agent from simply sitting still to gain survival points. Because survival already gives a reward, the idle penalty helps prevent passive strategies.
+## Conclusion
 
-### Wasted Mining Penalty
+The experiment found that simpler fitness design produced the best Space Miner agent. Training remained stochastic, so repeated runs with the same configuration could still produce different results. Adding rewards and penalties helped explore behavior, but too many terms reduced performance by making the learning signal less clear.
 
-```python
-wasted_mines = max(0, mine_attempts - successful_mines)
-fitness -= wasted_mines * 0.03
-```
-
-The agent has a mining output, but mining only helps when the ship overlaps a mineral. This penalty subtracts a small amount for mine attempts that do not collect anything.
-
-The penalty is intentionally light. It discourages constant spam-mining, but it does not punish exploration too harshly while the agent is still learning when to mine.
-
-## Overall Effect
-
-The reward system combines a main objective with several shaping signals:
-
-- The main goal is to collect minerals and survive.
-- Navigation shaping rewards moving closer to minerals before successful mining occurs.
-- Fuel rewards encourage efficient movement and resource conservation.
-- Asteroid penalties teach both safe spacing and collision avoidance.
-- Idle and wasted-mining penalties discourage passive or noisy behavior.
-
-This design helps NEAT learn more smoothly because the agent receives feedback throughout the episode, not only at the end. The strongest incentives are mineral collection, survival, and avoiding asteroid collisions, while the smaller rewards and penalties guide the agent toward cleaner and more efficient behavior.
+The final lesson is that reward shaping should be used carefully. Weight adjustment is helpful for guiding the initial behavior of the agent, but the fitness function should stay focused on the actual task: collect minerals, survive, and avoid asteroids.

@@ -3,6 +3,7 @@ import copy
 import math
 import os
 import pickle
+import random
 import neat
 import pygame
 
@@ -11,8 +12,8 @@ import pygame
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from miner_harness import Spaceship
-from miner_neat2 import Asteroid, Mineral
-#from miner_harness import Asteroid, Mineral
+#from miner_neat2 import Asteroid, Mineral
+from miner_harness import Asteroid, Mineral
 
 from train_neat_for_test_agent_config import (
     ASTEROID_COLLISION_EARLY_DEATH_WEIGHT,
@@ -46,7 +47,7 @@ from train_neat_for_test_agent_config import (
     WIDTH,
 )
 
-AUTO_STOP_PATIENCE = 15
+AUTO_STOP_PATIENCE = 50
 
 
 def relative_position(source, target, width=WIDTH, height=HEIGHT):
@@ -387,12 +388,12 @@ def score_episode(
     # fitness -= idle_time * IDLE_PENALTY_WEIGHT
     # fitness -= wasted_mines * WASTED_MINES_WEIGHT
 
-    if death_reason == "asteroid_collision":
-        fitness -= ASTEROID_COLLISION_PENALTY
-        fitness -= (
-            max(0, MAX_FRAMES + 1 - alive_time)
-            * ASTEROID_COLLISION_EARLY_DEATH_WEIGHT
-        )
+    # if death_reason == "asteroid_collision":
+    #     fitness -= ASTEROID_COLLISION_PENALTY
+    #     fitness -= (
+    #         max(0, MAX_FRAMES + 1 - alive_time)
+    #         * ASTEROID_COLLISION_EARLY_DEATH_WEIGHT
+    #     )
     # elif death_reason == "out_of_fuel":
     #    fitness -= OUT_OF_FUEL_PENALTY
 
@@ -505,6 +506,25 @@ class FitnessPlateauReporter(neat.reporting.BaseReporter):
             )
 
 
+def randomize_starting_weights(population, min_weight=None, max_weight=None, seed=None):
+    genome_config = population.config.genome_config
+    lower_bound = (
+        genome_config.weight_min_value if min_weight is None else min_weight
+    )
+    upper_bound = (
+        genome_config.weight_max_value if max_weight is None else max_weight
+    )
+    rng = random.Random(seed) if seed is not None else random
+    randomized_count = 0
+
+    for genome in population.population.values():
+        for connection in genome.connections.values():
+            connection.weight = rng.uniform(lower_bound, upper_bound)
+            randomized_count += 1
+
+    return randomized_count
+
+
 def train(config_path, output_path, generations, auto_stop_patience=AUTO_STOP_PATIENCE):
     config = neat.Config(
         neat.DefaultGenome,
@@ -524,6 +544,8 @@ def train(config_path, output_path, generations, auto_stop_patience=AUTO_STOP_PA
         )
 
     population = neat.Population(config)
+    #randomized_weights = randomize_starting_weights(population)
+    #print(f"Randomized {randomized_weights} starting connection weights.")
     population.add_reporter(neat.StdOutReporter(True))
     population.add_reporter(neat.StatisticsReporter())
     score_reporter = FitnessPlateauReporter(

@@ -73,7 +73,7 @@ class Mineral:
         self.radius = 10
 
     def draw(self):
-        pygame.draw.circle(screen, BLUE, (self.x, self.y), self.radius)
+        pygame.draw.circle(screen, YELLOW, (self.x, self.y), self.radius)
 
 # Asteroids (Obstacles)
 class Asteroid:
