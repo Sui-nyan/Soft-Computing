@@ -8,7 +8,9 @@ import configparser
 from datetime import datetime
 
 # 🌟 1. 載入老師規定的固定測試環境 (期末考場)
-from miner_harness import Spaceship, Mineral, Asteroid 
+from miner_harness import Spaceship
+# from miner_harness import Spaceship, Mineral, Asteroid 
+from miner_neat2 import Mineral, Asteroid 
 
 try:
     import train_neat_for_test_agent_config as training_constants
@@ -16,7 +18,7 @@ except ImportError:
     training_constants = None
 
 
-ANALYSIS_SCHEMA_VERSION = 3
+ANALYSIS_SCHEMA_VERSION = 4
 INPUT_NAMES = [
     "mineral_distance",
     "mineral_relative_angle",
@@ -381,6 +383,12 @@ def save_test_artifacts(
     config_artifact_path = os.path.join(test_dir, "configuration.txt")
     write_neat_config_artifact(config, config_artifact_path)
 
+    pickle_artifact_path = os.path.join(test_dir, f"test_{test_number}.pkl")
+    runnable_genome_artifact_path = os.path.join(test_dir, "winner.pkl")
+    for genome_artifact_path in (pickle_artifact_path, runnable_genome_artifact_path):
+        with open(genome_artifact_path, "wb") as f:
+            pickle.dump(winner, f, protocol=pickle.HIGHEST_PROTOCOL)
+
     artifact_data = {
         "analysis_schema_version": ANALYSIS_SCHEMA_VERSION,
         "test_number": test_number,
@@ -388,9 +396,8 @@ def save_test_artifacts(
         "config_file": os.path.abspath(config_file),
         "config_artifact": os.path.abspath(config_artifact_path),
         "genome_path": os.path.abspath(genome_path),
-        "runnable_genome_artifact": os.path.abspath(
-            os.path.join(test_dir, f"test_{test_number}.pkl")
-        ),
+        "genome_artifact": os.path.abspath(pickle_artifact_path),
+        "runnable_genome_artifact": os.path.abspath(runnable_genome_artifact_path),
         "config_values": parse_config_file(config_file),
         "training_constants": collect_training_constants(),
         "winner_summary": winner_summary or {},
@@ -402,14 +409,13 @@ def save_test_artifacts(
     with open(results_artifact_path, "w", encoding="utf-8") as f:
         json.dump(artifact_data, f, indent=2, ensure_ascii=False)
 
-    pickle_artifact_path = os.path.join(test_dir, f"test_{test_number}.pkl")
-    with open(pickle_artifact_path, "wb") as f:
-        pickle.dump(winner, f)
-
     return test_dir
 
 
 def test_best_agent(config_file, genome_path="winner.pkl"):
+    if not os.path.isabs(config_file):
+        config_file = os.path.join(os.path.dirname(__file__), config_file)
+
     if not os.path.isabs(genome_path):
         genome_path = os.path.join(os.path.dirname(__file__), genome_path)
 

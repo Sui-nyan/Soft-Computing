@@ -12,6 +12,8 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from miner_harness import Spaceship
 from miner_neat2 import Asteroid, Mineral
+#from miner_harness import Asteroid, Mineral
+
 from train_neat_for_test_agent_config import (
     ASTEROID_COLLISION_EARLY_DEATH_WEIGHT,
     ASTEROID_COLLISION_PENALTY,
@@ -44,7 +46,7 @@ from train_neat_for_test_agent_config import (
     WIDTH,
 )
 
-AUTO_STOP_PATIENCE = 50
+AUTO_STOP_PATIENCE = 15
 
 
 def relative_position(source, target, width=WIDTH, height=HEIGHT):
@@ -383,7 +385,7 @@ def score_episode(
     # fitness += ship.fuel * REMAINING_FUEL_WEIGHT
     fitness -= asteroid_danger * ASTEROID_DANGER_WEIGHT
     # fitness -= idle_time * IDLE_PENALTY_WEIGHT
-    fitness -= wasted_mines * WASTED_MINES_WEIGHT
+    # fitness -= wasted_mines * WASTED_MINES_WEIGHT
 
     if death_reason == "asteroid_collision":
         fitness -= ASTEROID_COLLISION_PENALTY
